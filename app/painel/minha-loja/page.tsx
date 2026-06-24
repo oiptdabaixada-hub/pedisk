@@ -11,7 +11,6 @@ import {
   Eye,
   Globe,
   ImagePlus,
-  Instagram,
   Link2,
   MapPin,
   MessageCircle,
