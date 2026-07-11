@@ -433,11 +433,17 @@ export default function CheckoutPage() {
           error.message.toLowerCase().includes("duplicate"))
       ) {
         orderCode = generateOrderCode();
-        payload = buildOrderPayload(orderCode);
+        const retryPayload = buildOrderPayload(orderCode);
+
+        if (!retryPayload) {
+          throw new Error("Não foi possível preparar o pedido novamente.");
+        }
+
+        payload = retryPayload;
 
         const retry = await supabase
           .from("orders")
-          .insert(payload)
+          .insert(retryPayload)
           .select("*")
           .single();
 
