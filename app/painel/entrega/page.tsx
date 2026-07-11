@@ -1,8 +1,11 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { supabase } from "@/lib/supabase";
 import {
   ArrowLeft,
+  Bike,
   Check,
   Copy,
   Edit3,
@@ -13,53 +16,29 @@ import {
   Plus,
   Search,
   Trash2,
-  Bike,
   X,
 } from "lucide-react";
 
 type DeliveryArea = {
-  id: number;
+  id: string;
+  store_id: string;
   neighborhood: string;
-  fee: string;
-  minOrder: string;
-  time: string;
+  delivery_fee: number;
+  minimum_order: number;
+  delivery_time: string;
   active: boolean;
 };
 
-const initialAreas: DeliveryArea[] = [
-  {
-    id: 1,
-    neighborhood: "Centro",
-    fee: "5,00",
-    minOrder: "20,00",
-    time: "30-40 min",
-    active: true,
-  },
-  {
-    id: 2,
-    neighborhood: "Gramacho",
-    fee: "8,00",
-    minOrder: "25,00",
-    time: "40-50 min",
-    active: true,
-  },
-  {
-    id: 3,
-    neighborhood: "Vila São Luís",
-    fee: "10,00",
-    minOrder: "30,00",
-    time: "45-60 min",
-    active: false,
-  },
-];
-
 export default function EntregaPage() {
-  const [areas, setAreas] = useState<DeliveryArea[]>(initialAreas);
+  const router = useRouter();
+
+  const [storeId, setStoreId] = useState("");
+  const [areas, setAreas] = useState<DeliveryArea[]>([]);
   const [search, setSearch] = useState("");
   const [editing, setEditing] = useState<DeliveryArea | null>(null);
-  const [selectedArea, setSelectedArea] = useState<DeliveryArea | null>(
-    initialAreas[0]
-  );
+  const [selectedArea, setSelectedArea] = useState<DeliveryArea | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
 
   const [form, setForm] = useState({
     neighborhood: "",
@@ -68,11 +47,69 @@ export default function EntregaPage() {
     time: "",
   });
 
+  useEffect(() => {
+    loadData();
+  }, []);
+
   const filteredAreas = useMemo(() => {
     return areas.filter((area) =>
       area.neighborhood.toLowerCase().includes(search.toLowerCase())
     );
   }, [areas, search]);
+
+  function parseMoney(value: string) {
+    const normalized = value.replace(/\./g, "").replace(",", ".");
+    const number = Number(normalized);
+    return Number.isNaN(number) ? 0 : number;
+  }
+
+  function formatMoney(value: number | null | undefined) {
+    if (!value) return "0,00";
+    return value.toLocaleString("pt-BR", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+  }
+
+  async function loadData() {
+    setLoading(true);
+
+    const { data: sessionData } = await supabase.auth.getSession();
+    const user = sessionData.session?.user;
+
+    if (!user) {
+      router.push("/login");
+      return;
+    }
+
+    const { data: storeData } = await supabase
+      .from("stores")
+      .select("id")
+      .eq("owner_id", user.id)
+      .single();
+
+    if (!storeData) {
+      setLoading(false);
+      return;
+    }
+
+    setStoreId(storeData.id);
+
+    const { data: zonesData, error } = await supabase
+      .from("delivery_zones")
+      .select("*")
+      .eq("store_id", storeData.id)
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error("Erro ao buscar bairros:", error);
+    }
+
+    const loadedAreas = (zonesData || []) as DeliveryArea[];
+    setAreas(loadedAreas);
+    setSelectedArea(loadedAreas[0] || null);
+    setLoading(false);
+  }
 
   function resetForm() {
     setEditing(null);
@@ -84,86 +121,137 @@ export default function EntregaPage() {
     });
   }
 
-  function saveArea() {
-    if (!form.neighborhood || !form.fee) return;
+  async function saveArea() {
+    if (!form.neighborhood || !form.fee || !storeId) return;
 
-    if (editing) {
-      setAreas((current) =>
-        current.map((area) =>
-          area.id === editing.id
-            ? {
-                ...area,
-                neighborhood: form.neighborhood,
-                fee: form.fee,
-                minOrder: form.minOrder,
-                time: form.time,
-              }
-            : area
-        )
-      );
+    setSaving(true);
 
-      if (selectedArea?.id === editing.id) {
-        setSelectedArea({
-          ...editing,
-          neighborhood: form.neighborhood,
-          fee: form.fee,
-          minOrder: form.minOrder,
-          time: form.time,
-        });
-      }
-
-      resetForm();
-      return;
-    }
-
-    const newArea: DeliveryArea = {
-      id: Date.now(),
+    const payload = {
+      store_id: storeId,
       neighborhood: form.neighborhood,
-      fee: form.fee,
-      minOrder: form.minOrder || "0,00",
-      time: form.time || "30-50 min",
+      delivery_fee: parseMoney(form.fee),
+      minimum_order: parseMoney(form.minOrder),
+      delivery_time: form.time || "30-50 min",
       active: true,
     };
 
-    setAreas((current) => [newArea, ...current]);
-    setSelectedArea(newArea);
-    resetForm();
+    if (editing) {
+      const { data, error } = await supabase
+        .from("delivery_zones")
+        .update({
+          neighborhood: payload.neighborhood,
+          delivery_fee: payload.delivery_fee,
+          minimum_order: payload.minimum_order,
+          delivery_time: payload.delivery_time,
+        })
+        .eq("id", editing.id)
+        .select()
+        .single();
+
+      if (!error && data) {
+        setAreas((current) =>
+          current.map((area) => (area.id === editing.id ? data : area))
+        );
+        setSelectedArea(data);
+        resetForm();
+      }
+
+      if (error) console.error("Erro ao editar bairro:", error);
+
+      setSaving(false);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("delivery_zones")
+      .insert(payload)
+      .select()
+      .single();
+
+    if (!error && data) {
+      setAreas((current) => [data, ...current]);
+      setSelectedArea(data);
+      resetForm();
+    }
+
+    if (error) console.error("Erro ao criar bairro:", error);
+
+    setSaving(false);
   }
 
   function editArea(area: DeliveryArea) {
     setEditing(area);
     setForm({
       neighborhood: area.neighborhood,
-      fee: area.fee,
-      minOrder: area.minOrder,
-      time: area.time,
+      fee: formatMoney(area.delivery_fee),
+      minOrder: formatMoney(area.minimum_order),
+      time: area.delivery_time,
     });
   }
 
-  function duplicateArea(area: DeliveryArea) {
-    const copyArea = {
-      ...area,
-      id: Date.now(),
-      neighborhood: `${area.neighborhood} cópia`,
-      active: true,
-    };
+  async function duplicateArea(area: DeliveryArea) {
+    const { data, error } = await supabase
+      .from("delivery_zones")
+      .insert({
+        store_id: storeId,
+        neighborhood: `${area.neighborhood} cópia`,
+        delivery_fee: area.delivery_fee,
+        minimum_order: area.minimum_order,
+        delivery_time: area.delivery_time,
+        active: true,
+      })
+      .select()
+      .single();
 
-    setAreas((current) => [copyArea, ...current]);
-  }
-
-  function deleteArea(id: number) {
-    setAreas((current) => current.filter((area) => area.id !== id));
-
-    if (selectedArea?.id === id) {
-      setSelectedArea(null);
+    if (!error && data) {
+      setAreas((current) => [data, ...current]);
     }
+
+    if (error) console.error("Erro ao duplicar bairro:", error);
   }
 
-  function toggleActive(id: number) {
-    setAreas((current) =>
-      current.map((area) =>
-        area.id === id ? { ...area, active: !area.active } : area
-      )
+  async function deleteArea(id: string) {
+    const { error } = await supabase.from("delivery_zones").delete().eq("id", id);
+
+    if (!error) {
+      setAreas((current) => current.filter((area) => area.id !== id));
+
+      if (selectedArea?.id === id) {
+        setSelectedArea(null);
+      }
+    }
+
+    if (error) console.error("Erro ao excluir bairro:", error);
+  }
+
+  async function toggleActive(area: DeliveryArea) {
+    const nextActive = !area.active;
+
+    const { data, error } = await supabase
+      .from("delivery_zones")
+      .update({ active: nextActive })
+      .eq("id", area.id)
+      .select()
+      .single();
+
+    if (!error && data) {
+      setAreas((current) =>
+        current.map((item) => (item.id === area.id ? data : item))
+      );
+
+      if (selectedArea?.id === area.id) {
+        setSelectedArea(data);
+      }
+    }
+
+    if (error) console.error("Erro ao alterar status:", error);
+  }
+
+  if (loading) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-[#050505] text-white">
+        <div className="h-12 w-12 animate-spin rounded-full border-4 border-white/10 border-t-orange-500" />
+      </main>
     );
   }
 
@@ -238,6 +326,18 @@ export default function EntregaPage() {
                 lista, o pedido não libera.
               </div>
 
+              {filteredAreas.length === 0 && (
+                <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-8 text-center backdrop-blur-xl">
+                  <p className="text-4xl">📍</p>
+                  <h2 className="mt-3 text-xl font-black">
+                    Nenhum bairro cadastrado
+                  </h2>
+                  <p className="mt-2 text-sm text-zinc-500">
+                    Adicione o primeiro bairro atendido pela loja.
+                  </p>
+                </div>
+              )}
+
               <div className="space-y-3">
                 {filteredAreas.map((area) => (
                   <div
@@ -266,8 +366,9 @@ export default function EntregaPage() {
                         </div>
 
                         <p className="mt-1 text-xs text-zinc-500">
-                          Taxa R$ {area.fee} • mínimo R$ {area.minOrder} •{" "}
-                          {area.time}
+                          Taxa R$ {formatMoney(area.delivery_fee)} • mínimo R${" "}
+                          {formatMoney(area.minimum_order)} •{" "}
+                          {area.delivery_time}
                         </p>
                       </div>
                     </div>
@@ -296,7 +397,7 @@ export default function EntregaPage() {
                       <button
                         onClick={(event) => {
                           event.stopPropagation();
-                          toggleActive(area.id);
+                          toggleActive(area);
                         }}
                         className="rounded-xl border border-white/10 bg-black/30 py-2 text-zinc-300 hover:border-orange-400/40 hover:text-orange-400"
                       >
@@ -390,10 +491,15 @@ export default function EntregaPage() {
 
                 <button
                   onClick={saveArea}
-                  className="flex w-full items-center justify-center gap-2 rounded-2xl bg-orange-500 px-5 py-3 font-black shadow-[0_0_30px_rgba(249,115,22,0.25)] hover:bg-orange-400"
+                  disabled={saving}
+                  className="flex w-full items-center justify-center gap-2 rounded-2xl bg-orange-500 px-5 py-3 font-black shadow-[0_0_30px_rgba(249,115,22,0.25)] hover:bg-orange-400 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {editing ? <Check size={18} /> : <Plus size={18} />}
-                  {editing ? "Salvar alterações" : "Adicionar área"}
+                  {saving
+                    ? "Salvando..."
+                    : editing
+                    ? "Salvar alterações"
+                    : "Adicionar área"}
                 </button>
               </div>
             </div>
@@ -444,16 +550,16 @@ export default function EntregaPage() {
                             {area.neighborhood}
                           </p>
                           <p className="mt-1 text-[11px] text-zinc-500">
-                            Mínimo R$ {area.minOrder}
+                            Mínimo R$ {formatMoney(area.minimum_order)}
                           </p>
                         </div>
 
                         <div className="text-right">
                           <p className="text-xs font-black text-orange-400">
-                            R$ {area.fee}
+                            R$ {formatMoney(area.delivery_fee)}
                           </p>
                           <p className="mt-1 text-[11px] text-zinc-500">
-                            {area.time}
+                            {area.delivery_time}
                           </p>
                         </div>
                       </div>
@@ -465,7 +571,7 @@ export default function EntregaPage() {
                 <div className="mb-3 flex items-center justify-between text-xs">
                   <span className="text-zinc-500">Taxa selecionada</span>
                   <span className="font-black text-orange-400">
-                    R$ {selectedArea?.fee || "0,00"}
+                    R$ {formatMoney(selectedArea?.delivery_fee)}
                   </span>
                 </div>
 

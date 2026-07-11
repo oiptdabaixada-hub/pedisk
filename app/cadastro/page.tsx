@@ -1,7 +1,14 @@
+"use client";
+
+import Link from "next/link";
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { supabase } from "@/lib/supabase";
 import {
   ArrowRight,
   BadgeCheck,
   Eye,
+  EyeOff,
   Lock,
   Mail,
   MessageCircle,
@@ -12,6 +19,110 @@ import {
 } from "lucide-react";
 
 export default function CadastroPage() {
+  const router = useRouter();
+
+  const [storeName, setStoreName] = useState("");
+  const [ownerName, setOwnerName] = useState("");
+  const [whatsapp, setWhatsapp] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+
+  const [showPassword, setShowPassword] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
+
+  function generateSlug(value: string) {
+    return value
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z0-9\s-]/g, "")
+      .trim()
+      .replace(/\s+/g, "-")
+      .replace(/-+/g, "-");
+  }
+
+  async function handleCadastro(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setErrorMessage("");
+
+    if (!storeName || !ownerName || !whatsapp || !email || !password) {
+      setErrorMessage("Preencha todos os campos para criar sua loja.");
+      return;
+    }
+
+    if (password.length < 6) {
+      setErrorMessage("A senha precisa ter pelo menos 6 caracteres.");
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      const { data: authData, error: authError } =
+        await supabase.auth.signUp({
+          email,
+          password,
+          options: {
+            data: {
+              name: ownerName,
+              store_name: storeName,
+              whatsapp,
+            },
+          },
+        });
+
+      if (authError) {
+        throw authError;
+      }
+
+      const user = authData.user;
+
+      if (!user) {
+        throw new Error("Não foi possível criar o usuário.");
+      }
+
+      const { error: profileError } = await supabase.from("profiles").insert({
+        id: user.id,
+        name: ownerName,
+        email,
+      });
+
+      if (profileError) {
+        throw profileError;
+      }
+
+      const baseSlug = generateSlug(storeName);
+      const finalSlug = `${baseSlug}-${Math.floor(1000 + Math.random() * 9000)}`;
+
+      const { error: storeError } = await supabase.from("stores").insert({
+        owner_id: user.id,
+        name: storeName,
+        slug: finalSlug,
+        whatsapp,
+        description:
+          "Loja criada no Pedisk. Edite sua descrição no painel Minha Loja.",
+        is_open: true,
+        delivery_time: "30-40 min",
+        minimum_order: 20,
+        default_delivery_fee: 5,
+        rating: 4.9,
+      });
+
+      if (storeError) {
+        throw storeError;
+      }
+
+      router.push("/painel/minha-loja");
+    } catch (error: any) {
+      setErrorMessage(
+        error?.message || "Erro ao criar sua loja. Tente novamente."
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
   return (
     <main className="min-h-screen overflow-hidden bg-[#050505] text-white">
       <div className="pointer-events-none fixed inset-0">
@@ -82,96 +193,133 @@ export default function CadastroPage() {
               </p>
             </div>
 
-            <form className="space-y-4">
-              <div>
-                <label className="mb-2 block text-sm font-bold text-zinc-300">
-                  Nome da loja
-                </label>
-                <div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-black/40 px-4 py-4 transition focus-within:border-orange-400/50">
-                  <Store size={20} className="text-orange-400" />
-                  <input
-                    type="text"
-                    placeholder="Ex: Smash House"
-                    className="w-full bg-transparent text-sm text-white outline-none placeholder:text-zinc-600"
-                  />
-                </div>
+            {errorMessage && (
+              <div className="mb-5 rounded-2xl border border-red-400/30 bg-red-500/10 px-4 py-3 text-sm font-bold text-red-300">
+                {errorMessage}
               </div>
+            )}
+
+            <form onSubmit={handleCadastro} className="space-y-4">
+              <InputBox
+                label="Nome da loja *"
+                icon={<Store size={20} className="text-orange-400" />}
+                value={storeName}
+                onChange={setStoreName}
+                placeholder="Ex: Smash House"
+                type="text"
+              />
+
+              <InputBox
+                label="Seu nome *"
+                icon={<User size={20} className="text-orange-400" />}
+                value={ownerName}
+                onChange={setOwnerName}
+                placeholder="Nome do responsável"
+                type="text"
+              />
+
+              <InputBox
+                label="WhatsApp da loja *"
+                icon={<MessageCircle size={20} className="text-orange-400" />}
+                value={whatsapp}
+                onChange={setWhatsapp}
+                placeholder="Ex: 21999999999"
+                type="text"
+              />
+
+              <InputBox
+                label="E-mail *"
+                icon={<Mail size={20} className="text-orange-400" />}
+                value={email}
+                onChange={setEmail}
+                placeholder="voce@email.com"
+                type="email"
+              />
 
               <div>
                 <label className="mb-2 block text-sm font-bold text-zinc-300">
-                  Seu nome
+                  Senha *
                 </label>
-                <div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-black/40 px-4 py-4 transition focus-within:border-orange-400/50">
-                  <User size={20} className="text-orange-400" />
-                  <input
-                    type="text"
-                    placeholder="Nome do responsável"
-                    className="w-full bg-transparent text-sm text-white outline-none placeholder:text-zinc-600"
-                  />
-                </div>
-              </div>
 
-              <div>
-                <label className="mb-2 block text-sm font-bold text-zinc-300">
-                  WhatsApp da loja
-                </label>
-                <div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-black/40 px-4 py-4 transition focus-within:border-orange-400/50">
-                  <MessageCircle size={20} className="text-orange-400" />
-                  <input
-                    type="text"
-                    placeholder="Ex: 21999999999"
-                    className="w-full bg-transparent text-sm text-white outline-none placeholder:text-zinc-600"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="mb-2 block text-sm font-bold text-zinc-300">
-                  E-mail
-                </label>
-                <div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-black/40 px-4 py-4 transition focus-within:border-orange-400/50">
-                  <Mail size={20} className="text-orange-400" />
-                  <input
-                    type="email"
-                    placeholder="voce@email.com"
-                    className="w-full bg-transparent text-sm text-white outline-none placeholder:text-zinc-600"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="mb-2 block text-sm font-bold text-zinc-300">
-                  Senha
-                </label>
                 <div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-black/40 px-4 py-4 transition focus-within:border-orange-400/50">
                   <Lock size={20} className="text-orange-400" />
+
                   <input
-                    type="password"
+                    type={showPassword ? "text" : "password"}
+                    value={password}
+                    onChange={(event) => setPassword(event.target.value)}
                     placeholder="Crie uma senha segura"
                     className="w-full bg-transparent text-sm text-white outline-none placeholder:text-zinc-600"
                   />
-                  <Eye size={18} className="text-zinc-500" />
+
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((current) => !current)}
+                    className="text-zinc-500 transition hover:text-orange-400"
+                  >
+                    {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                  </button>
                 </div>
               </div>
 
               <button
-                type="button"
-                className="group mt-6 flex w-full items-center justify-center gap-3 rounded-2xl bg-orange-500 px-6 py-4 font-black text-white shadow-[0_0_45px_rgba(249,115,22,0.35)] transition hover:-translate-y-1 hover:bg-orange-400"
+                type="submit"
+                disabled={loading}
+                className="group mt-6 flex w-full items-center justify-center gap-3 rounded-2xl bg-orange-500 px-6 py-4 font-black text-white shadow-[0_0_45px_rgba(249,115,22,0.35)] transition hover:-translate-y-1 hover:bg-orange-400 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0"
               >
-                Criar minha loja
-                <ArrowRight size={20} className="transition group-hover:translate-x-1" />
+                {loading ? "Criando sua loja..." : "Criar loja grátis"}
+                <ArrowRight
+                  size={20}
+                  className="transition group-hover:translate-x-1"
+                />
               </button>
             </form>
 
             <p className="mt-6 text-center text-sm text-zinc-500">
               Já tem conta?{" "}
-              <a href="/login" className="font-bold text-orange-400">
+              <Link href="/login" className="font-bold text-orange-400">
                 Entrar agora
-              </a>
+              </Link>
             </p>
           </div>
         </div>
       </section>
     </main>
+  );
+}
+
+function InputBox({
+  label,
+  icon,
+  value,
+  onChange,
+  placeholder,
+  type,
+}: {
+  label: string;
+  icon: React.ReactNode;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+  type: string;
+}) {
+  return (
+    <div>
+      <label className="mb-2 block text-sm font-bold text-zinc-300">
+        {label}
+      </label>
+
+      <div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-black/40 px-4 py-4 transition focus-within:border-orange-400/50">
+        {icon}
+
+        <input
+          type={type}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          placeholder={placeholder}
+          className="w-full bg-transparent text-sm text-white outline-none placeholder:text-zinc-600"
+        />
+      </div>
+    </div>
   );
 }

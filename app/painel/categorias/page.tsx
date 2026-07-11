@@ -1,6 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { supabase } from "@/lib/supabase";
 import {
   ArrowLeft,
   Check,
@@ -19,50 +21,71 @@ import {
 } from "lucide-react";
 
 type Category = {
-  id: number;
+  id: string;
+  store_id: string;
   emoji: string;
   name: string;
   description: string;
   active: boolean;
   featured: boolean;
+  position: number;
 };
 
-const initialCategories: Category[] = [
-  {
-    id: 1,
-    emoji: "🍔",
-    name: "Hambúrgueres",
-    description: "Smash, artesanais e combos principais.",
-    active: true,
-    featured: true,
-  },
-  {
-    id: 2,
-    emoji: "🍟",
-    name: "Porções",
-    description: "Batata, acompanhamentos e entradas.",
-    active: true,
-    featured: false,
-  },
-  {
-    id: 3,
-    emoji: "🥤",
-    name: "Bebidas",
-    description: "Refrigerantes, sucos e adicionais.",
-    active: true,
-    featured: false,
-  },
-];
-
 export default function CategoriasPage() {
-  const [categories, setCategories] = useState<Category[]>(initialCategories);
+  const router = useRouter();
+
+  const [storeId, setStoreId] = useState("");
+  const [storeName, setStoreName] = useState("Minha Loja");
+  const [categories, setCategories] = useState<Category[]>([]);
   const [search, setSearch] = useState("");
   const [editing, setEditing] = useState<Category | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
   const [form, setForm] = useState({
     emoji: "🍔",
     name: "",
     description: "",
   });
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  async function loadData() {
+    setLoading(true);
+
+    const { data: sessionData } = await supabase.auth.getSession();
+    const user = sessionData.session?.user;
+
+    if (!user) {
+      router.push("/login");
+      return;
+    }
+
+    const { data: store, error: storeError } = await supabase
+      .from("stores")
+      .select("id, name")
+      .eq("owner_id", user.id)
+      .single();
+
+    if (storeError || !store) {
+      setLoading(false);
+      return;
+    }
+
+    setStoreId(store.id);
+    setStoreName(store.name || "Minha Loja");
+
+    const { data: categoriesData } = await supabase
+      .from("categories")
+      .select("*")
+      .eq("store_id", store.id)
+      .order("position", { ascending: true });
+
+    setCategories((categoriesData || []) as Category[]);
+    setLoading(false);
+  }
 
   const filteredCategories = useMemo(() => {
     return categories.filter((category) =>
@@ -79,39 +102,64 @@ export default function CategoriasPage() {
     });
   }
 
-  function saveCategory() {
-    if (!form.name) return;
+  async function saveCategory() {
+    if (!form.name || !storeId) return;
+
+    setSaving(true);
 
     if (editing) {
-      setCategories((current) =>
-        current.map((category) =>
-          category.id === editing.id
-            ? {
-                ...category,
-                emoji: form.emoji,
-                name: form.name,
-                description: form.description,
-              }
-            : category
-        )
-      );
-      resetForm();
+      const { error } = await supabase
+        .from("categories")
+        .update({
+          emoji: form.emoji,
+          name: form.name,
+          description: form.description,
+        })
+        .eq("id", editing.id);
+
+      if (!error) {
+        setCategories((current) =>
+          current.map((category) =>
+            category.id === editing.id
+              ? {
+                  ...category,
+                  emoji: form.emoji,
+                  name: form.name,
+                  description: form.description,
+                }
+              : category
+          )
+        );
+
+        resetForm();
+      }
+
+      setSaving(false);
       return;
     }
 
-    setCategories((current) => [
-      {
-        id: Date.now(),
+    const nextPosition = categories.length;
+
+    const { data, error } = await supabase
+      .from("categories")
+      .insert({
+        store_id: storeId,
         emoji: form.emoji,
         name: form.name,
         description: form.description,
         active: true,
         featured: false,
-      },
-      ...current,
-    ]);
+        position: nextPosition,
+      })
+      .select()
+      .single();
 
-    resetForm();
+    if (!error && data) {
+      setCategories((current) => [...current, data as Category]);
+      resetForm();
+    }
+
+    setSaving(false);
   }
 
   function editCategory(category: Category) {
@@ -119,59 +167,109 @@ export default function CategoriasPage() {
     setForm({
       emoji: category.emoji,
       name: category.name,
-      description: category.description,
+      description: category.description || "",
     });
   }
 
-  function deleteCategory(id: number) {
-    setCategories((current) => current.filter((category) => category.id !== id));
+  async function deleteCategory(id: string) {
+    const { error } = await supabase.from("categories").delete().eq("id", id);
+
+    if (!error) {
+      setCategories((current) =>
+        current.filter((category) => category.id !== id)
+      );
+    }
   }
 
-  function duplicateCategory(category: Category) {
-    setCategories((current) => [
-      {
-        ...category,
-        id: Date.now(),
+  async function duplicateCategory(category: Category) {
+    const { data, error } = await supabase
+      .from("categories")
+      .insert({
+        store_id: storeId,
+        emoji: category.emoji,
         name: `${category.name} cópia`,
+        description: category.description,
+        active: category.active,
         featured: false,
-      },
-      ...current,
-    ]);
+        position: categories.length,
+      })
+      .select()
+      .single();
+
+    if (!error && data) {
+      setCategories((current) => [...current, data as Category]);
+    }
   }
 
-  function toggleActive(id: number) {
-    setCategories((current) =>
-      current.map((category) =>
-        category.id === id
-          ? { ...category, active: !category.active }
-          : category
+  async function toggleActive(category: Category) {
+    const nextActive = !category.active;
+
+    const { error } = await supabase
+      .from("categories")
+      .update({ active: nextActive })
+      .eq("id", category.id);
+
+    if (!error) {
+      setCategories((current) =>
+        current.map((item) =>
+          item.id === category.id ? { ...item, active: nextActive } : item
+        )
+      );
+    }
+  }
+
+  async function toggleFeatured(category: Category) {
+    const nextFeatured = !category.featured;
+
+    const { error } = await supabase
+      .from("categories")
+      .update({ featured: nextFeatured })
+      .eq("id", category.id);
+
+    if (!error) {
+      setCategories((current) =>
+        current.map((item) =>
+          item.id === category.id
+            ? { ...item, featured: nextFeatured }
+            : item
+        )
+      );
+    }
+  }
+
+  async function moveCategory(id: string, direction: "up" | "down") {
+    const index = categories.findIndex((category) => category.id === id);
+    const newIndex = direction === "up" ? index - 1 : index + 1;
+
+    if (newIndex < 0 || newIndex >= categories.length) return;
+
+    const updated = [...categories];
+    const [removed] = updated.splice(index, 1);
+    updated.splice(newIndex, 0, removed);
+
+    const reordered = updated.map((category, position) => ({
+      ...category,
+      position,
+    }));
+
+    setCategories(reordered);
+
+    await Promise.all(
+      reordered.map((category) =>
+        supabase
+          .from("categories")
+          .update({ position: category.position })
+          .eq("id", category.id)
       )
     );
   }
 
-  function toggleFeatured(id: number) {
-    setCategories((current) =>
-      current.map((category) =>
-        category.id === id
-          ? { ...category, featured: !category.featured }
-          : category
-      )
+  if (loading) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-[#050505] text-white">
+        <div className="h-12 w-12 animate-spin rounded-full border-4 border-white/10 border-t-orange-500" />
+      </main>
     );
-  }
-
-  function moveCategory(id: number, direction: "up" | "down") {
-    setCategories((current) => {
-      const index = current.findIndex((category) => category.id === id);
-      const newIndex = direction === "up" ? index - 1 : index + 1;
-
-      if (newIndex < 0 || newIndex >= current.length) return current;
-
-      const updated = [...current];
-      const [removed] = updated.splice(index, 1);
-      updated.splice(newIndex, 0, removed);
-
-      return updated;
-    });
   }
 
   return (
@@ -240,6 +338,18 @@ export default function CategoriasPage() {
                   className="w-full bg-transparent text-sm outline-none placeholder:text-zinc-600"
                 />
               </div>
+
+              {filteredCategories.length === 0 && (
+                <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-8 text-center backdrop-blur-xl">
+                  <p className="text-4xl">🍽️</p>
+                  <h2 className="mt-3 text-xl font-black">
+                    Nenhuma categoria ainda
+                  </h2>
+                  <p className="mt-2 text-sm text-zinc-500">
+                    Crie sua primeira categoria para organizar sua vitrine.
+                  </p>
+                </div>
+              )}
 
               <div className="space-y-3">
                 {filteredCategories.map((category, index) => (
@@ -311,7 +421,7 @@ export default function CategoriasPage() {
                       </button>
 
                       <button
-                        onClick={() => toggleFeatured(category.id)}
+                        onClick={() => toggleFeatured(category)}
                         className={`rounded-xl border py-2 ${
                           category.featured
                             ? "border-orange-400/40 bg-orange-500/15 text-orange-400"
@@ -322,7 +432,7 @@ export default function CategoriasPage() {
                       </button>
 
                       <button
-                        onClick={() => toggleActive(category.id)}
+                        onClick={() => toggleActive(category)}
                         className="rounded-xl border border-white/10 bg-black/30 py-2 text-zinc-300 hover:border-orange-400/40 hover:text-orange-400"
                       >
                         {category.active ? (
@@ -403,10 +513,15 @@ export default function CategoriasPage() {
 
                 <button
                   onClick={saveCategory}
-                  className="flex w-full items-center justify-center gap-2 rounded-2xl bg-orange-500 px-5 py-3 font-black shadow-[0_0_30px_rgba(249,115,22,0.25)] hover:bg-orange-400"
+                  disabled={saving}
+                  className="flex w-full items-center justify-center gap-2 rounded-2xl bg-orange-500 px-5 py-3 font-black shadow-[0_0_30px_rgba(249,115,22,0.25)] hover:bg-orange-400 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {editing ? <Check size={18} /> : <Plus size={18} />}
-                  {editing ? "Salvar alterações" : "Adicionar categoria"}
+                  {saving
+                    ? "Salvando..."
+                    : editing
+                    ? "Salvar alterações"
+                    : "Adicionar categoria"}
                 </button>
               </div>
             </div>
@@ -431,7 +546,7 @@ export default function CategoriasPage() {
                   categorias
                 </p>
                 <h3 className="text-2xl font-black leading-none">
-                  Smash House
+                  {storeName}
                 </h3>
                 <p className="mt-2 text-xs text-orange-100">
                   Escolha uma seção

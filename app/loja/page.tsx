@@ -1,7 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { supabase } from "@/lib/supabase";
 import {
   ArrowLeft,
   ChevronRight,
@@ -12,107 +14,151 @@ import {
   Truck,
 } from "lucide-react";
 
-type Product = {
-  id: number;
-  slug: string;
+type StoreData = {
+  id: string;
+  owner_id: string;
   name: string;
-  desc: string;
-  price: number;
-  emoji: string;
-  image: string;
-  category: string;
-  highlight?: boolean;
+  slug: string;
+  description: string;
+  logo_url: string | null;
+  banner_url: string | null;
+  whatsapp: string | null;
+  is_open: boolean;
+  delivery_time: string | null;
+  minimum_order: number | null;
+  default_delivery_fee: number | null;
+  rating: number | null;
+  primary_color: string | null;
 };
 
-const categories = [
-  { name: "Todos", emoji: "🔥" },
-  { name: "Hambúrgueres", emoji: "🍔" },
-  { name: "Combos", emoji: "🔥" },
-  { name: "Porções", emoji: "🍟" },
-  { name: "Bebidas", emoji: "🥤" },
-];
+type Category = {
+  id: string;
+  store_id: string;
+  name: string;
+  emoji: string;
+  position: number;
+  active: boolean;
+  description: string | null;
+  featured: boolean;
+};
 
-const products: Product[] = [
-  {
-    id: 1,
-    slug: "smash-bacon",
-    name: "Smash Bacon",
-    desc: "Pão brioche, cheddar, bacon crocante e molho especial.",
-    price: 32.9,
-    emoji: "🍔",
-    image: "https://images.unsplash.com/photo-1568901346375-23c9450c58cd",
-    category: "Hambúrgueres",
-    highlight: true,
-  },
-  {
-    id: 2,
-    slug: "combo-duplo",
-    name: "Combo Duplo",
-    desc: "Burger artesanal, fritas crocantes e refrigerante gelado.",
-    price: 49.9,
-    emoji: "🔥",
-    image: "https://images.unsplash.com/photo-1550547660-d9450f859349",
-    category: "Combos",
-    highlight: true,
-  },
-  {
-    id: 3,
-    slug: "batata-suprema",
-    name: "Batata Suprema",
-    desc: "Batata crocante com cheddar cremoso e bacon.",
-    price: 18.9,
-    emoji: "🍟",
-    image: "https://images.unsplash.com/photo-1576107232684-1279f390859f",
-    category: "Porções",
-  },
-  {
-    id: 4,
-    slug: "coca-cola-lata",
-    name: "Coca-Cola Lata",
-    desc: "Refrigerante gelado 350ml.",
-    price: 8,
-    emoji: "🥤",
-    image: "https://images.unsplash.com/photo-1622483767028-3f66f32aef97",
-    category: "Bebidas",
-  },
-  {
-    id: 5,
-    slug: "batata-bacon",
-    name: "Batata Bacon",
-    desc: "Batata sequinha com bacon e cheddar.",
-    price: 22.9,
-    emoji: "🍟",
-    image: "https://images.unsplash.com/photo-1630384060421-cb20d0e0649d",
-    category: "Porções",
-  },
-  {
-    id: 6,
-    slug: "guarana-lata",
-    name: "Guaraná Lata",
-    desc: "Guaraná gelado 350ml.",
-    price: 7,
-    emoji: "🥤",
-    image: "https://images.unsplash.com/photo-1581006852262-e4307cf6283a",
-    category: "Bebidas",
-  },
-];
+type Product = {
+  id: string;
+  store_id: string;
+  category_id: string | null;
+  name: string;
+  slug: string | null;
+  description: string;
+  price: number;
+  image_url: string | null;
+  emoji: string;
+  is_promotion: boolean;
+  promotion_price: number | null;
+  active: boolean;
+  position: number;
+};
 
 export default function LojaPage() {
+  const router = useRouter();
+
+  const [store, setStore] = useState<StoreData | null>(null);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
   const [selectedCategory, setSelectedCategory] = useState("Todos");
   const [search, setSearch] = useState("");
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    loadStore();
+  }, []);
+
+  async function loadStore() {
+  setLoading(true);
+
+  try {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const user = sessionData.session?.user;
+
+    let storeQuery = supabase.from("stores").select("*");
+
+    if (user) {
+      storeQuery = storeQuery.eq("owner_id", user.id);
+    }
+
+    const { data: storesData, error: storeError } = await storeQuery
+      .order("created_at", { ascending: false })
+      .limit(1);
+
+    const storeData = storesData?.[0];
+
+    if (storeError) {
+      console.error("Erro ao buscar loja:", storeError);
+    }
+
+    if (!storeData) {
+      setStore(null);
+      setCategories([]);
+      setProducts([]);
+      return;
+    }
+
+    setStore(storeData as StoreData);
+
+    const { data: categoriesData, error: categoriesError } = await supabase
+      .from("categories")
+      .select("*")
+      .eq("store_id", storeData.id)
+      .eq("active", true)
+      .order("position", { ascending: true });
+
+    if (categoriesError) {
+      console.error("Erro ao buscar categorias:", categoriesError);
+    }
+
+    setCategories((categoriesData || []) as Category[]);
+
+    const { data: productsData, error: productsError } = await supabase
+      .from("products")
+      .select("*")
+      .eq("store_id", storeData.id)
+      .eq("active", true)
+      .order("position", { ascending: true });
+
+    if (productsError) {
+      console.error("Erro ao buscar produtos:", productsError);
+    }
+
+    setProducts((productsData || []) as Product[]);
+  } catch (error) {
+    console.error("Erro geral na loja:", error);
+    setStore(null);
+    setCategories([]);
+    setProducts([]);
+  } finally {
+    setLoading(false);
+  }
+}
+
+  const visibleCategories = useMemo(() => {
+    return [{ id: "todos", name: "Todos", emoji: "🔥" }, ...categories];
+  }, [categories]);
 
   const filteredProducts = useMemo(() => {
     return products.filter((product) => {
+      const category = categories.find(
+        (item) => item.id === product.category_id
+      );
+
       const matchCategory =
-        selectedCategory === "Todos" || product.category === selectedCategory;
+        selectedCategory === "Todos" || category?.name === selectedCategory;
 
       const matchSearch =
         product.name.toLowerCase().includes(search.toLowerCase()) ||
-        product.desc.toLowerCase().includes(search.toLowerCase());
+        product.description.toLowerCase().includes(search.toLowerCase());
 
       return matchCategory && matchSearch;
     });
-  }, [selectedCategory, search]);
+  }, [products, categories, selectedCategory, search]);
 
   function money(value: number) {
     return value.toLocaleString("pt-BR", {
@@ -121,11 +167,51 @@ export default function LojaPage() {
     });
   }
 
+  function productHref(product: Product) {
+    return `/produto/${product.slug || product.id}`;
+  }
+
+  const primaryColor = store?.primary_color || "#f97316";
+  const deliveryFee = store?.default_delivery_fee || 0;
+  const minimumOrder = store?.minimum_order || 0;
+  const deliveryTime = store?.delivery_time || "30-40 min";
+  const rating = store?.rating || 4.9;
+
+  if (loading) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-[#050505] text-white">
+        <div className="h-12 w-12 animate-spin rounded-full border-4 border-white/10 border-t-orange-500" />
+      </main>
+    );
+  }
+
+  if (!store) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-[#050505] px-4 text-center text-white">
+        <div>
+          <div className="mx-auto mb-5 flex h-20 w-20 items-center justify-center rounded-[28px] bg-white/[0.04] text-4xl">
+            🏪
+          </div>
+          <h1 className="text-3xl font-black">Loja não encontrada</h1>
+          <p className="mt-3 text-sm text-zinc-500">
+            Configure sua loja no painel para ela aparecer aqui.
+          </p>
+        </div>
+      </main>
+    );
+  }
+
   return (
     <main className="min-h-screen bg-[#050505] pb-24 text-white">
       <div className="pointer-events-none fixed inset-0">
-        <div className="absolute left-[-160px] top-[-160px] h-[420px] w-[420px] rounded-full bg-orange-500/15 blur-[140px]" />
-        <div className="absolute bottom-[-200px] right-[-180px] h-[480px] w-[480px] rounded-full bg-orange-500/10 blur-[150px]" />
+        <div
+          className="absolute left-[-160px] top-[-160px] h-[420px] w-[420px] rounded-full blur-[140px]"
+          style={{ backgroundColor: `${primaryColor}26` }}
+        />
+        <div
+          className="absolute bottom-[-200px] right-[-180px] h-[480px] w-[480px] rounded-full blur-[150px]"
+          style={{ backgroundColor: `${primaryColor}1A` }}
+        />
       </div>
 
       <section className="relative z-10 mx-auto max-w-6xl px-4">
@@ -137,16 +223,24 @@ export default function LojaPage() {
               </button>
 
               <div>
-                <p className="text-base font-black leading-tight">Smash House</p>
-                <p className="text-xs font-semibold text-green-400">
-                  Aberto agora • 30-40 min
+                <p className="text-base font-black leading-tight">
+                  {store.name}
+                </p>
+                <p
+                  className={`text-xs font-semibold ${
+                    store.is_open ? "text-green-400" : "text-red-300"
+                  }`}
+                >
+                  {store.is_open ? "Aberto agora" : "Fechado agora"} •{" "}
+                  {deliveryTime}
                 </p>
               </div>
             </div>
 
             <Link
               href="/checkout"
-              className="flex h-10 w-10 items-center justify-center rounded-xl bg-orange-500 shadow-[0_0_25px_rgba(249,115,22,0.35)]"
+              className="flex h-10 w-10 items-center justify-center rounded-xl shadow-[0_0_25px_rgba(249,115,22,0.35)]"
+              style={{ backgroundColor: primaryColor }}
             >
               <ShoppingBag size={18} />
             </Link>
@@ -156,32 +250,56 @@ export default function LojaPage() {
         <div className="pt-4">
           <div className="overflow-hidden rounded-[28px] border border-white/10 bg-white/[0.04] backdrop-blur-xl">
             <div className="relative h-[185px] overflow-hidden md:h-[250px]">
-              <img
-                src="https://images.unsplash.com/photo-1513104890138-7c749659a591"
-                alt="Banner da loja"
-                className="absolute inset-0 h-full w-full object-cover"
-              />
+              {store.banner_url ? (
+                <img
+                  src={store.banner_url}
+                  alt="Banner da loja"
+                  className="absolute inset-0 h-full w-full object-cover"
+                />
+              ) : (
+                <div
+                  className="absolute inset-0"
+                  style={{ backgroundColor: primaryColor }}
+                />
+              )}
 
               <div className="absolute inset-0 bg-black/50" />
               <div className="absolute inset-0 bg-gradient-to-t from-[#050505] via-black/10 to-transparent" />
 
               <div className="relative z-10 flex h-full flex-col justify-end p-4 md:p-6">
                 <div className="flex items-end gap-3">
-                  <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-2xl border-2 border-white bg-orange-500 text-4xl shadow-[0_0_35px_rgba(249,115,22,0.35)] md:h-20 md:w-20">
-                    🍔
+                  <div
+                    className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-2xl border-2 border-white text-4xl shadow-[0_0_35px_rgba(249,115,22,0.35)] md:h-20 md:w-20"
+                    style={{ backgroundColor: primaryColor }}
+                  >
+                    {store.logo_url?.startsWith("http") ? (
+                      <img
+                        src={store.logo_url}
+                        alt={store.name}
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      store.logo_url || "p"
+                    )}
                   </div>
 
                   <div>
-                    <div className="mb-1 inline-flex rounded-full bg-green-500/15 px-3 py-1 text-[11px] font-black text-green-400">
-                      ● Aberto agora
+                    <div
+                      className={`mb-1 inline-flex rounded-full px-3 py-1 text-[11px] font-black ${
+                        store.is_open
+                          ? "bg-green-500/15 text-green-400"
+                          : "bg-red-500/15 text-red-300"
+                      }`}
+                    >
+                      ● {store.is_open ? "Aberto agora" : "Fechado agora"}
                     </div>
 
                     <h1 className="text-3xl font-black tracking-[-0.05em] md:text-5xl">
-                      Smash House
+                      {store.name}
                     </h1>
 
                     <p className="mt-1 line-clamp-2 max-w-xl text-xs text-zinc-300 md:text-sm">
-                      Hambúrguer artesanal, combos e porções feitos pra pedir rápido.
+                      {store.description}
                     </p>
                   </div>
                 </div>
@@ -189,16 +307,36 @@ export default function LojaPage() {
             </div>
 
             <div className="grid grid-cols-4 gap-2 p-3">
-              <MiniInfo icon={<Truck size={15} />} label="Entrega" value="R$5" />
-              <MiniInfo icon={<Clock3 size={15} />} label="Tempo" value="30-40" />
-              <MiniInfo icon={<ShoppingBag size={15} />} label="Mínimo" value="R$20" />
-              <MiniInfo icon={<Star size={15} />} label="Nota" value="4.9" />
+              <MiniInfo
+                icon={<Truck size={15} />}
+                label="Entrega"
+                value={money(deliveryFee)}
+                color={primaryColor}
+              />
+              <MiniInfo
+                icon={<Clock3 size={15} />}
+                label="Tempo"
+                value={deliveryTime}
+                color={primaryColor}
+              />
+              <MiniInfo
+                icon={<ShoppingBag size={15} />}
+                label="Mínimo"
+                value={money(minimumOrder)}
+                color={primaryColor}
+              />
+              <MiniInfo
+                icon={<Star size={15} />}
+                label="Nota"
+                value={String(rating)}
+                color={primaryColor}
+              />
             </div>
           </div>
 
           <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.04] p-2 backdrop-blur-xl">
             <div className="flex items-center gap-3 rounded-xl bg-black/35 px-4 py-3">
-              <Search size={17} className="text-orange-400" />
+              <Search size={17} style={{ color: primaryColor }} />
               <input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
@@ -210,15 +348,24 @@ export default function LojaPage() {
 
           <div className="sticky top-[65px] z-30 -mx-4 mt-4 border-y border-white/10 bg-[#050505]/90 px-4 py-3 backdrop-blur-xl">
             <div className="flex gap-2 overflow-x-auto">
-              {categories.map((category) => (
+              {visibleCategories.map((category) => (
                 <button
-                  key={category.name}
+                  key={category.id}
                   onClick={() => setSelectedCategory(category.name)}
                   className={`min-w-fit rounded-xl border px-4 py-2.5 text-xs font-black transition ${
                     selectedCategory === category.name
-                      ? "border-orange-400/60 bg-orange-500/15 text-orange-300"
+                      ? "text-orange-300"
                       : "border-white/10 bg-white/[0.04] text-zinc-400"
                   }`}
+                  style={
+                    selectedCategory === category.name
+                      ? {
+                          borderColor: `${primaryColor}99`,
+                          backgroundColor: `${primaryColor}24`,
+                          color: primaryColor,
+                        }
+                      : {}
+                  }
                 >
                   <span className="mr-1">{category.emoji}</span>
                   {category.name}
@@ -237,61 +384,105 @@ export default function LojaPage() {
               </p>
             </div>
 
+            {filteredProducts.length === 0 && (
+              <div className="rounded-[26px] border border-white/10 bg-white/[0.04] p-8 text-center backdrop-blur-xl">
+                <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-white/[0.04] text-3xl">
+                  🍽️
+                </div>
+                <h3 className="text-xl font-black">
+                  Nenhum produto encontrado
+                </h3>
+                <p className="mt-2 text-sm text-zinc-500">
+                  Tente outra busca ou outra categoria.
+                </p>
+              </div>
+            )}
+
             <div className="grid gap-3 md:grid-cols-2">
-              {filteredProducts.map((product) => (
-                <Link
-                  href={`/produto/${product.slug}`}
-                  key={product.id}
-                  className="group flex gap-3 rounded-[24px] border border-white/10 bg-white/[0.04] p-3 backdrop-blur-xl transition hover:border-orange-400/40 hover:bg-orange-500/10"
-                >
-                  <div className="relative h-28 w-28 shrink-0 overflow-hidden rounded-[20px] md:h-32 md:w-36">
-                    <img
-                      src={product.image}
-                      alt={product.name}
-                      className="h-full w-full object-cover transition duration-500 group-hover:scale-105"
-                    />
+              {filteredProducts.map((product) => {
+                const price =
+                  product.is_promotion && product.promotion_price
+                    ? product.promotion_price
+                    : product.price;
 
-                    {product.highlight && (
-                      <div className="absolute left-2 top-2 rounded-full bg-orange-500 px-2 py-1 text-[9px] font-black">
-                        top
-                      </div>
-                    )}
-                  </div>
+                return (
+                  <Link
+                    href={productHref(product)}
+                    key={product.id}
+                    className="group flex gap-3 rounded-[24px] border border-white/10 bg-white/[0.04] p-3 backdrop-blur-xl transition hover:border-orange-400/40 hover:bg-orange-500/10"
+                  >
+                    <div className="relative h-28 w-28 shrink-0 overflow-hidden rounded-[20px] bg-black/35 md:h-32 md:w-36">
+                      {product.image_url ? (
+                        <img
+                          src={product.image_url}
+                          alt={product.name}
+                          className="h-full w-full object-cover transition duration-500 group-hover:scale-105"
+                        />
+                      ) : (
+                        <div className="flex h-full w-full items-center justify-center text-5xl">
+                          {product.emoji || "🍽️"}
+                        </div>
+                      )}
 
-                  <div className="flex min-w-0 flex-1 flex-col justify-between py-1">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-xl">{product.emoji}</span>
-                        <h3 className="truncate text-base font-black md:text-lg">
-                          {product.name}
-                        </h3>
-                      </div>
-
-                      <p className="mt-1 line-clamp-2 text-xs leading-5 text-zinc-500 md:text-sm">
-                        {product.desc}
-                      </p>
+                      {product.is_promotion && (
+                        <div
+                          className="absolute left-2 top-2 rounded-full px-2 py-1 text-[9px] font-black"
+                          style={{ backgroundColor: primaryColor }}
+                        >
+                          PROMOÇÃO
+                        </div>
+                      )}
                     </div>
 
-                    <div className="mt-3 flex items-center justify-between gap-2">
-                      <p className="text-xl font-black text-yellow-300">
-                        {money(product.price)}
-                      </p>
+                    <div className="flex min-w-0 flex-1 flex-col justify-between py-1">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xl">
+                            {product.emoji || "🍽️"}
+                          </span>
+                          <h3 className="truncate text-base font-black md:text-lg">
+                            {product.name}
+                          </h3>
+                        </div>
 
-                      <div className="flex items-center gap-1 rounded-xl bg-orange-500 px-3 py-2 text-xs font-black">
-                        Ver
-                        <ChevronRight size={14} />
+                        <p className="mt-1 line-clamp-2 text-xs leading-5 text-zinc-500 md:text-sm">
+                          {product.description}
+                        </p>
+                      </div>
+
+                      <div className="mt-3 flex items-center justify-between gap-2">
+                        <div>
+                          {product.is_promotion && product.promotion_price && (
+                            <p className="text-xs font-bold text-zinc-600 line-through">
+                              {money(product.price)}
+                            </p>
+                          )}
+
+                          <p className="text-xl font-black text-yellow-300">
+                            {money(price)}
+                          </p>
+                        </div>
+
+                        <div
+                          className="flex items-center gap-1 rounded-xl px-3 py-2 text-xs font-black"
+                          style={{ backgroundColor: primaryColor }}
+                        >
+                          Ver
+                          <ChevronRight size={14} />
+                        </div>
                       </div>
                     </div>
-                  </div>
-                </Link>
-              ))}
+                  </Link>
+                );
+              })}
             </div>
           </section>
         </div>
 
         <Link
           href="/checkout"
-          className="fixed bottom-4 left-4 right-4 z-40 mx-auto flex max-w-md items-center justify-between rounded-2xl border border-orange-400/20 bg-orange-500 px-4 py-3 font-black shadow-[0_18px_50px_rgba(249,115,22,0.35)]"
+          className="fixed bottom-4 left-4 right-4 z-40 mx-auto flex max-w-md items-center justify-between rounded-2xl border border-orange-400/20 px-4 py-3 font-black shadow-[0_18px_50px_rgba(249,115,22,0.35)]"
+          style={{ backgroundColor: primaryColor }}
         >
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-black/20">
@@ -315,14 +506,18 @@ function MiniInfo({
   icon,
   label,
   value,
+  color,
 }: {
   icon: React.ReactNode;
   label: string;
   value: string;
+  color: string;
 }) {
   return (
     <div className="rounded-2xl bg-black/35 p-3">
-      <div className="mb-2 text-orange-400">{icon}</div>
+      <div className="mb-2" style={{ color }}>
+        {icon}
+      </div>
       <p className="text-[10px] text-zinc-500">{label}</p>
       <p className="mt-0.5 text-xs font-black md:text-sm">{value}</p>
     </div>

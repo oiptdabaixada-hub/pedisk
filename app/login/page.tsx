@@ -1,7 +1,14 @@
+"use client";
+
+import Link from "next/link";
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { supabase } from "@/lib/supabase";
 import {
   ArrowRight,
   BarChart3,
   Eye,
+  EyeOff,
   Lock,
   Mail,
   ShieldCheck,
@@ -11,6 +18,74 @@ import {
 } from "lucide-react";
 
 export default function LoginPage() {
+  const router = useRouter();
+
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+
+  const [showPassword, setShowPassword] = useState(false);
+  const [rememberAccess, setRememberAccess] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
+
+  async function handleLogin(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setErrorMessage("");
+
+    if (!email || !password) {
+      setErrorMessage("Preencha e-mail e senha para entrar.");
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+
+      if (error) {
+        throw error;
+      }
+
+      if (!data.user) {
+        throw new Error("Não foi possível entrar na conta.");
+      }
+
+      if (rememberAccess) {
+        localStorage.setItem("pedisk-remember-access", "true");
+      } else {
+        localStorage.removeItem("pedisk-remember-access");
+      }
+
+      router.push("/painel/minha-loja");
+    } catch (error: any) {
+      setErrorMessage(
+        error?.message === "Invalid login credentials"
+          ? "E-mail ou senha incorretos."
+          : error?.message || "Erro ao entrar. Tente novamente."
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleGoogleLogin() {
+    setErrorMessage("");
+
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: {
+        redirectTo: `${window.location.origin}/painel/minha-loja`,
+      },
+    });
+
+    if (error) {
+      setErrorMessage("Não foi possível entrar com Google.");
+    }
+  }
+
   return (
     <main className="min-h-screen overflow-hidden bg-[#050505] text-white">
       <div className="pointer-events-none fixed inset-0">
@@ -35,7 +110,9 @@ export default function LoginPage() {
 
           <h1 className="max-w-xl text-6xl font-black leading-[0.95] tracking-[-0.06em]">
             Acesse já nosso painel e{" "}
-            <span className="text-orange-500">venda + com aparência premium.</span>
+            <span className="text-orange-500">
+              venda + com aparência premium.
+            </span>
           </h1>
 
           <p className="mt-6 max-w-lg text-lg leading-8 text-zinc-400">
@@ -110,15 +187,25 @@ export default function LoginPage() {
               </p>
             </div>
 
-            <form className="space-y-5">
+            {errorMessage && (
+              <div className="mb-5 rounded-2xl border border-red-400/30 bg-red-500/10 px-4 py-3 text-sm font-bold text-red-300">
+                {errorMessage}
+              </div>
+            )}
+
+            <form onSubmit={handleLogin} className="space-y-5">
               <div>
                 <label className="mb-2 block text-sm font-bold text-zinc-300">
                   E-mail
                 </label>
+
                 <div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-black/40 px-4 py-4 transition focus-within:border-orange-400/50">
                   <Mail size={20} className="text-zinc-500" />
+
                   <input
                     type="email"
+                    value={email}
+                    onChange={(event) => setEmail(event.target.value)}
                     placeholder="voce@email.com"
                     className="w-full bg-transparent text-sm text-white outline-none placeholder:text-zinc-600"
                   />
@@ -129,34 +216,59 @@ export default function LoginPage() {
                 <label className="mb-2 block text-sm font-bold text-zinc-300">
                   Senha
                 </label>
+
                 <div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-black/40 px-4 py-4 transition focus-within:border-orange-400/50">
                   <Lock size={20} className="text-zinc-500" />
+
                   <input
-                    type="password"
+                    type={showPassword ? "text" : "password"}
+                    value={password}
+                    onChange={(event) => setPassword(event.target.value)}
                     placeholder="Sua senha"
                     className="w-full bg-transparent text-sm text-white outline-none placeholder:text-zinc-600"
                   />
-                  <Eye size={18} className="text-zinc-500" />
+
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((current) => !current)}
+                    className="text-zinc-500 transition hover:text-orange-400"
+                  >
+                    {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                  </button>
                 </div>
               </div>
 
               <div className="flex items-center justify-between text-sm">
                 <label className="flex items-center gap-2 text-zinc-400">
-                  <input type="checkbox" className="accent-orange-500" />
+                  <input
+                    type="checkbox"
+                    checked={rememberAccess}
+                    onChange={(event) =>
+                      setRememberAccess(event.target.checked)
+                    }
+                    className="accent-orange-500"
+                  />
                   Lembrar acesso
                 </label>
 
-                <button type="button" className="font-bold text-orange-400">
+                <button
+                  type="button"
+                  className="font-bold text-orange-400 opacity-70"
+                >
                   Esqueci a senha
                 </button>
               </div>
 
               <button
-                type="button"
-                className="group flex w-full items-center justify-center gap-3 rounded-2xl bg-orange-500 px-6 py-4 text-lg font-black text-white shadow-[0_0_45px_rgba(249,115,22,0.35)] transition hover:-translate-y-1 hover:bg-orange-400"
+                type="submit"
+                disabled={loading}
+                className="group flex w-full items-center justify-center gap-3 rounded-2xl bg-orange-500 px-6 py-4 text-lg font-black text-white shadow-[0_0_45px_rgba(249,115,22,0.35)] transition hover:-translate-y-1 hover:bg-orange-400 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0"
               >
-                Entrar no painel
-                <ArrowRight size={22} className="transition group-hover:translate-x-1" />
+                {loading ? "Entrando..." : "Entrar no painel"}
+                <ArrowRight
+                  size={22}
+                  className="transition group-hover:translate-x-1"
+                />
               </button>
 
               <div className="flex items-center gap-4 py-2">
@@ -167,6 +279,7 @@ export default function LoginPage() {
 
               <button
                 type="button"
+                onClick={handleGoogleLogin}
                 className="flex w-full items-center justify-center gap-3 rounded-2xl border border-white/10 bg-black/30 px-6 py-4 font-bold text-zinc-300 transition hover:border-orange-400/40 hover:bg-orange-500/10"
               >
                 Entrar com Google
@@ -175,9 +288,9 @@ export default function LoginPage() {
 
             <p className="mt-7 text-center text-sm text-zinc-500">
               Ainda não tem conta?{" "}
-              <a href="/cadastro" className="font-black text-orange-400">
+              <Link href="/cadastro" className="font-black text-orange-400">
                 Criar minha loja
-              </a>
+              </Link>
             </p>
           </div>
         </div>
