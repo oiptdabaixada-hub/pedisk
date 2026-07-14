@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   CheckCircle2,
   ChevronRight,
@@ -16,7 +17,7 @@ import {
 } from "lucide-react";
 
 type Extra = {
-  id: number;
+  id: number | string;
   name: string;
   price: number;
   emoji: string;
@@ -24,7 +25,7 @@ type Extra = {
 
 type CartItem = {
   cartId: string;
-  productId: number;
+  productId: number | string;
   slug: string;
   name: string;
   desc: string;
@@ -48,6 +49,10 @@ type Order = {
   id: string;
   createdAt: string;
   status: OrderStatus;
+  storeId?: string;
+  storeName?: string;
+  storeSlug?: string;
+  storeWhatsapp?: string;
   customer: {
     name: string;
     phone: string;
@@ -65,11 +70,20 @@ type Order = {
   total: number;
 };
 
-const WHATSAPP_NUMBER = "5521999999999";
-
 export default function PedidoConcluidoPage() {
+  const searchParams = useSearchParams();
+
   const [order, setOrder] = useState<Order | null>(null);
   const [loaded, setLoaded] = useState(false);
+
+  const whatsappWindowRef = useRef<Window | null>(null);
+
+  const urlStoreSlug = (searchParams.get("loja") || "")
+    .trim()
+    .toLowerCase();
+
+  const activeStoreSlug = order?.storeSlug || urlStoreSlug;
+  const storeHref = activeStoreSlug ? `/${activeStoreSlug}` : "/loja";
 
   useEffect(() => {
     const rawOrder = localStorage.getItem("pedisk-last-order");
@@ -81,7 +95,8 @@ export default function PedidoConcluidoPage() {
     }
 
     try {
-      setOrder(JSON.parse(rawOrder));
+      const parsedOrder = JSON.parse(rawOrder) as Order;
+      setOrder(parsedOrder);
     } catch {
       setOrder(null);
     }
@@ -90,20 +105,68 @@ export default function PedidoConcluidoPage() {
   }, []);
 
   function money(value: number) {
-    return value.toLocaleString("pt-BR", {
+    return Number(value || 0).toLocaleString("pt-BR", {
       style: "currency",
       currency: "BRL",
     });
   }
 
+  function normalizeWhatsApp(value: string | null | undefined) {
+    const digits = (value || "").replace(/\D/g, "");
+
+    if (!digits) return "";
+    if (digits.startsWith("55")) return digits;
+
+    return `55${digits}`;
+  }
+
+  function isMobileDevice() {
+    return /Android|iPhone|iPad|iPod|Mobile/i.test(
+      navigator.userAgent
+    );
+  }
+
   function openWhatsApp() {
     if (!order) return;
 
-    const message = `Olá, fiz o pedido ${order.id} e quero acompanhar o status.`;
-    window.open(
-      `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(message)}`,
-      "_blank"
+    const whatsappNumber = normalizeWhatsApp(order.storeWhatsapp);
+
+    if (!whatsappNumber) {
+      alert("A loja ainda não cadastrou um WhatsApp válido.");
+      return;
+    }
+
+    const message = `Olá! Fiz o pedido ${order.id} na ${
+      order.storeName || "loja"
+    } e gostaria de acompanhar o status.`;
+
+    const params = new URLSearchParams({
+      phone: whatsappNumber,
+      text: message,
+    });
+
+    if (isMobileDevice()) {
+      window.location.href = `https://api.whatsapp.com/send?${params.toString()}`;
+      return;
+    }
+
+    const url = `https://web.whatsapp.com/send?${params.toString()}`;
+
+    if (
+      whatsappWindowRef.current &&
+      !whatsappWindowRef.current.closed
+    ) {
+      whatsappWindowRef.current.location.href = url;
+      whatsappWindowRef.current.focus();
+      return;
+    }
+
+    whatsappWindowRef.current = window.open(
+      url,
+      "pedisk-whatsapp"
     );
+
+    whatsappWindowRef.current?.focus();
   }
 
   if (!loaded) {
@@ -135,7 +198,7 @@ export default function PedidoConcluidoPage() {
           </p>
 
           <Link
-            href="/loja"
+            href={storeHref}
             className="mt-7 flex w-full items-center justify-center gap-2 rounded-2xl bg-orange-500 px-5 py-4 font-black"
           >
             Voltar para loja
@@ -265,7 +328,7 @@ export default function PedidoConcluidoPage() {
           </button>
 
           <Link
-            href="/loja"
+            href={storeHref}
             className="flex w-full items-center justify-center gap-2 rounded-2xl bg-orange-500 px-5 py-4 font-black"
           >
             <ShoppingBag size={19} />
@@ -305,7 +368,7 @@ function Card({
 }) {
   return (
     <div
-      id="resumo"
+      id={title === "Resumo do pedido" ? "resumo" : undefined}
       className="rounded-[26px] border border-white/10 bg-white/[0.04] p-5 backdrop-blur-xl"
     >
       <div className="mb-4 flex items-center gap-3">

@@ -1,19 +1,26 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import {
   ArrowLeft,
   BadgeCheck,
+  CheckCircle2,
   Check,
   Clock3,
   Copy,
   Eye,
   Globe,
+  ExternalLink,
   ImagePlus,
   Link2,
+  Loader2,
+  LockKeyhole,
   MessageCircle,
+  Rocket,
+  RefreshCw,
   Save,
   ShieldCheck,
   Sparkles,
@@ -21,6 +28,7 @@ import {
   Trash2,
   Truck,
   Upload,
+  XCircle,
 } from "lucide-react";
 
 type StoreForm = {
@@ -46,6 +54,7 @@ type StoreForm = {
   deliveryFee: string;
   primaryColor: string;
   isOpen: boolean;
+  isPublished: boolean;
 };
 
 type ProductPreview = {
@@ -57,6 +66,12 @@ type ProductPreview = {
 };
 
 const BUCKET_NAME = "store-image";
+
+const RESERVED_SLUGS = new Set([
+  "", "api", "admin", "app", "cadastro", "checkout", "login",
+  "loja", "painel", "pedido-concluido", "produto", "privacidade",
+  "suporte", "termos", "favicon.ico",
+]);
 
 const emptyStore: StoreForm = {
   id: "",
@@ -81,6 +96,7 @@ const emptyStore: StoreForm = {
   deliveryFee: "",
   primaryColor: "#f97316",
   isOpen: true,
+  isPublished: false,
 };
 
 export default function MinhaLojaPage() {
@@ -96,20 +112,70 @@ export default function MinhaLojaPage() {
   const [saved, setSaved] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const [uploadingBanner, setUploadingBanner] = useState(false);
+  const [originalSlug, setOriginalSlug] = useState("");
+  const [slugChecking, setSlugChecking] = useState(false);
+  const [slugAvailable, setSlugAvailable] = useState<boolean | null>(null);
+  const [slugMessage, setSlugMessage] = useState("");
+  const [toast, setToast] = useState("");
+  const [previewVersion, setPreviewVersion] = useState(() => Date.now());
+  const [previewLoading, setPreviewLoading] = useState(true);
 
   useEffect(() => {
     loadStore();
   }, []);
 
+  const cleanSlug = useMemo(
+    () => normalizeSlug(store.slug || store.name || ""),
+    [store.slug, store.name]
+  );
+
   const storeLink = useMemo(() => {
-    return `pedisk.app/${store.slug || "sua-loja"}`;
-  }, [store.slug]);
+    if (typeof window === "undefined") {
+      return `https://pedisk.com.br/${cleanSlug || "sua-loja"}`;
+    }
+
+    return `${window.location.origin}/${cleanSlug || "sua-loja"}`;
+  }, [cleanSlug]);
+
+  const previewUrl = useMemo(() => {
+    if (!cleanSlug) return "";
+    return `${storeLink}?preview=1&v=${previewVersion}`;
+  }, [cleanSlug, storeLink, previewVersion]);
+
+  function refreshPreview() {
+    setPreviewLoading(true);
+    setPreviewVersion(Date.now());
+  }
+
+  const publishChecklist = useMemo(
+    () => [
+      Boolean(store.name.trim()),
+      Boolean(cleanSlug) && slugAvailable !== false,
+      Boolean(store.whatsapp.trim()),
+      Boolean(store.logo.trim()),
+      Boolean(store.bannerUrl.trim()),
+      Boolean(store.openingTime.trim()),
+      products.length > 0,
+    ],
+    [store, cleanSlug, slugAvailable, products.length]
+  );
+
+  const publishProgress = Math.round(
+    (publishChecklist.filter(Boolean).length / publishChecklist.length) * 100
+  );
+
+  const canPublish = publishChecklist.every(Boolean);
 
   function updateStore(field: keyof StoreForm, value: string | boolean) {
     setStore((current) => ({
       ...current,
       [field]: value,
     }));
+  }
+
+  function showToast(message: string) {
+    setToast(message);
+    window.setTimeout(() => setToast(""), 2800);
   }
 
   function money(value: number) {
@@ -135,8 +201,58 @@ export default function MinhaLojaPage() {
       .toLowerCase()
       .normalize("NFD")
       .replace(/[\u0300-\u036f]/g, "")
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "");
+      .replace(/[^a-z0-9]+/g, "")
+      .slice(0, 40);
+  }
+
+  async function checkSlugAvailability(value: string) {
+    const slug = normalizeSlug(value);
+
+    if (!slug) {
+      setSlugAvailable(null);
+      setSlugMessage("Escolha um endereço curto e fácil de lembrar.");
+      return false;
+    }
+
+    if (RESERVED_SLUGS.has(slug)) {
+      setSlugAvailable(false);
+      setSlugMessage("Esse endereço é reservado pelo sistema.");
+      return false;
+    }
+
+    if (slug === originalSlug) {
+      setSlugAvailable(true);
+      setSlugMessage("Este é o endereço atual da sua loja.");
+      return true;
+    }
+
+    setSlugChecking(true);
+
+    const { data, error } = await supabase
+      .from("stores")
+      .select("id")
+      .eq("slug", slug)
+      .neq("id", store.id || "00000000-0000-0000-0000-000000000000")
+      .limit(1);
+
+    setSlugChecking(false);
+
+    if (error) {
+      console.error("Erro ao verificar slug:", error);
+      setSlugAvailable(null);
+      setSlugMessage("Não foi possível verificar agora.");
+      return false;
+    }
+
+    const available = !data || data.length === 0;
+    setSlugAvailable(available);
+    setSlugMessage(
+      available
+        ? "Endereço disponível."
+        : "Esse endereço já está sendo usado por outra loja."
+    );
+
+    return available;
   }
 
   function isImageUrl(value: string) {
@@ -198,6 +314,7 @@ export default function MinhaLojaPage() {
       }
 
       setSaved(true);
+      refreshPreview();
       setTimeout(() => setSaved(false), 2500);
     } finally {
       setUploadingLogo(false);
@@ -278,7 +395,16 @@ export default function MinhaLojaPage() {
       deliveryFee: formatMoneyInput(storeData.default_delivery_fee),
       primaryColor: storeData.primary_color || "#f97316",
       isOpen: Boolean(storeData.is_open),
+      isPublished: Boolean(storeData.is_published),
     });
+
+    setOriginalSlug(storeData.slug || "");
+    setSlugAvailable(storeData.slug ? true : null);
+    setSlugMessage(
+      storeData.slug
+        ? "Este é o endereço atual da sua loja."
+        : "Escolha o endereço público da sua loja."
+    );
 
     const { data: productsData } = await supabase
       .from("products")
@@ -292,53 +418,114 @@ export default function MinhaLojaPage() {
     setLoading(false);
   }
 
-  async function saveStore() {
-    if (!store.id) return;
+  async function saveStore(options?: { publish?: boolean }) {
+    if (!store.id) return false;
 
     setSaving(true);
     setSaved(false);
 
-    const cleanSlug = normalizeSlug(store.slug || store.name || "minha-loja");
+    try {
+      const finalSlug = normalizeSlug(store.slug || store.name || "");
 
-    const { error } = await supabase
-      .from("stores")
-      .update({
-        name: store.name,
-        slug: cleanSlug,
-        description: store.description,
-        logo_url: store.logo,
-        banner_url: store.bannerUrl,
-        whatsapp: store.whatsapp,
-        instagram: store.instagram,
-        address: store.address,
-        neighborhood: store.neighborhood,
-        city: store.city,
-        state: store.state,
-        is_open: store.isOpen,
-        opening_hours: store.openingTime,
-        closing_hours: store.closingTime,
-        delivery_time: store.averageTime,
-        minimum_order: parseMoney(store.minOrder),
-        default_delivery_fee: parseMoney(store.deliveryFee),
-        banner_title: store.bannerTitle,
-        banner_subtitle: store.bannerSubtitle,
-        banner_price: parseMoney(store.bannerPrice),
-        primary_color: store.primaryColor || "#f97316",
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", store.id);
+      if (!store.name.trim()) {
+        showToast("Digite o nome da loja.");
+        return false;
+      }
 
-    if (!error) {
-      setStore((current) => ({ ...current, slug: cleanSlug }));
+      if (!finalSlug || RESERVED_SLUGS.has(finalSlug)) {
+        setSlugAvailable(false);
+        setSlugMessage("Escolha outro endereço para sua loja.");
+        showToast("Escolha um endereço público válido.");
+        return false;
+      }
+
+      if (finalSlug !== originalSlug) {
+        const available = await checkSlugAvailability(finalSlug);
+        if (!available) {
+          showToast("Esse endereço não está disponível.");
+          return false;
+        }
+      }
+
+      if (options?.publish && !canPublish) {
+        showToast("Complete o checklist antes de publicar.");
+        return false;
+      }
+
+      const nextPublished =
+        typeof options?.publish === "boolean"
+          ? options.publish
+          : store.isPublished;
+
+      const { error } = await supabase
+        .from("stores")
+        .update({
+          name: store.name.trim(),
+          slug: finalSlug,
+          description: store.description.trim(),
+          logo_url: store.logo,
+          banner_url: store.bannerUrl,
+          whatsapp: store.whatsapp.trim(),
+          instagram: store.instagram.trim(),
+          address: store.address.trim(),
+          neighborhood: store.neighborhood.trim(),
+          city: store.city.trim(),
+          state: store.state.trim().toUpperCase(),
+          is_open: store.isOpen,
+          is_published: nextPublished,
+          opening_hours: store.openingTime,
+          closing_hours: store.closingTime,
+          delivery_time: store.averageTime,
+          minimum_order: parseMoney(store.minOrder),
+          default_delivery_fee: parseMoney(store.deliveryFee),
+          banner_title: store.bannerTitle,
+          banner_subtitle: store.bannerSubtitle,
+          banner_price: parseMoney(store.bannerPrice),
+          primary_color: store.primaryColor || "#f97316",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", store.id);
+
+      if (error) throw error;
+
+      setStore((current) => ({
+        ...current,
+        slug: finalSlug,
+        isPublished: nextPublished,
+      }));
+
+      setOriginalSlug(finalSlug);
+      setSlugAvailable(true);
+      setSlugMessage("Este é o endereço atual da sua loja.");
       setSaved(true);
-      setTimeout(() => setSaved(false), 2500);
-    }
+      refreshPreview();
+      window.setTimeout(() => setSaved(false), 2200);
 
-    setSaving(false);
+      showToast(
+        typeof options?.publish === "boolean"
+          ? nextPublished
+            ? "Loja publicada com sucesso."
+            : "Loja retirada do ar."
+          : "Alterações salvas."
+      );
+
+      return true;
+    } catch (error) {
+      console.error("Erro ao salvar loja:", error);
+      showToast("Não foi possível salvar. Confira o banco de dados.");
+      return false;
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function copyLink() {
     await navigator.clipboard.writeText(storeLink);
+    showToast("Link copiado.");
+  }
+
+  async function togglePublication() {
+    await saveStore({ publish: !store.isPublished });
   }
 
   if (loading) {
@@ -351,6 +538,11 @@ export default function MinhaLojaPage() {
 
   return (
     <main className="min-h-screen bg-[#050505] text-white">
+      {toast && (
+        <div className="fixed left-1/2 top-5 z-[130] -translate-x-1/2 rounded-full border border-orange-400/30 bg-[#15100c]/95 px-5 py-3 text-sm font-black text-orange-300 shadow-2xl backdrop-blur-xl">
+          {toast}
+        </div>
+      )}
       <input
         ref={logoInputRef}
         type="file"
@@ -394,9 +586,16 @@ export default function MinhaLojaPage() {
 
             <div className="flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
               <div>
-                <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-orange-400/30 bg-orange-500/10 px-4 py-2 text-xs font-black uppercase tracking-[0.18em] text-orange-300">
-                  <Sparkles size={14} />
-                  Minha loja
+                <div className="mb-3 flex flex-wrap items-center gap-2">
+                  <span className="inline-flex items-center gap-2 rounded-full border border-orange-400/30 bg-orange-500/10 px-4 py-2 text-xs font-black uppercase tracking-[0.18em] text-orange-300">
+                    <Sparkles size={14} />
+                    Minha loja
+                  </span>
+
+                  <span className={`inline-flex items-center gap-2 rounded-full px-3 py-2 text-[10px] font-black ${store.isPublished ? "bg-green-500/10 text-green-300" : "bg-zinc-500/10 text-zinc-400"}`}>
+                    <span className={`h-2 w-2 rounded-full ${store.isPublished ? "animate-pulse bg-green-400" : "bg-zinc-600"}`} />
+                    {store.isPublished ? "Publicada" : "Rascunho"}
+                  </span>
                 </div>
 
                 <h1 className="text-3xl font-black tracking-[-0.04em] md:text-4xl">
@@ -409,14 +608,25 @@ export default function MinhaLojaPage() {
                 </p>
               </div>
 
-              <button
-                onClick={saveStore}
-                disabled={saving}
-                className="flex items-center justify-center gap-2 rounded-2xl bg-orange-500 px-5 py-3 font-black shadow-[0_0_30px_rgba(249,115,22,0.25)] hover:bg-orange-400 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                <Save size={18} />
-                {saving ? "Salvando..." : saved ? "Salvo!" : "Salvar loja"}
-              </button>
+              <div className="flex flex-col gap-3 sm:flex-row">
+                <button
+                  onClick={() => saveStore()}
+                  disabled={saving}
+                  className="flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/[0.04] px-5 py-3 font-black hover:border-orange-400/30 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {saving ? <Loader2 className="animate-spin" size={18} /> : <Save size={18} />}
+                  {saving ? "Salvando..." : saved ? "Salvo!" : "Salvar alterações"}
+                </button>
+
+                <button
+                  onClick={togglePublication}
+                  disabled={saving || (!store.isPublished && !canPublish)}
+                  className={`flex items-center justify-center gap-2 rounded-2xl px-5 py-3 font-black disabled:cursor-not-allowed disabled:opacity-45 ${store.isPublished ? "border border-red-500/20 bg-red-500/10 text-red-300" : "bg-orange-500 text-white shadow-[0_0_30px_rgba(249,115,22,0.25)] hover:bg-orange-400"}`}
+                >
+                  {store.isPublished ? <LockKeyhole size={18} /> : <Rocket size={18} />}
+                  {store.isPublished ? "Retirar do ar" : "Publicar loja"}
+                </button>
+              </div>
             </div>
           </header>
 
@@ -669,26 +879,66 @@ export default function MinhaLojaPage() {
                   </div>
                 </div>
 
-                <label className="mb-2 block text-xs font-bold text-zinc-300">Slug</label>
+                <label className="mb-2 block text-xs font-bold text-zinc-300">
+                  Seu endereço Pedisk
+                </label>
 
-                <div className="flex items-center gap-2 rounded-2xl border border-white/10 bg-black/40 px-4 py-3">
-                  <Globe size={18} className="text-orange-400" />
+                <div className={`flex items-center rounded-2xl border bg-black/40 transition ${slugAvailable === true ? "border-green-400/35" : slugAvailable === false ? "border-red-400/35" : "border-white/10 focus-within:border-orange-400/45"}`}>
+                  <span className="border-r border-white/10 px-3 py-3 text-[10px] font-black text-zinc-500">
+                    pedisk.com.br/
+                  </span>
+
                   <input
                     value={store.slug}
-                    onChange={(event) => updateStore("slug", event.target.value)}
-                    className="w-full bg-transparent text-sm outline-none"
+                    onChange={(event) => {
+                      const value = normalizeSlug(event.target.value);
+                      updateStore("slug", value);
+                      setSlugAvailable(null);
+                      setSlugMessage("Salve para verificar e reservar esse endereço.");
+                    }}
+                    onBlur={(event) => checkSlugAvailability(event.target.value)}
+                    placeholder="idealpizza"
+                    maxLength={40}
+                    className="min-w-0 flex-1 bg-transparent px-3 py-3 text-sm font-black outline-none"
                   />
+
+                  <div className="pr-3">
+                    {slugChecking && <Loader2 className="animate-spin text-orange-400" size={17} />}
+                    {!slugChecking && slugAvailable === true && <CheckCircle2 className="text-green-400" size={18} />}
+                    {!slugChecking && slugAvailable === false && <XCircle className="text-red-400" size={18} />}
+                  </div>
                 </div>
 
-                <div className="mt-3 flex items-center gap-2 rounded-2xl bg-black/35 px-4 py-3">
-                  <p className="flex-1 truncate text-xs font-bold text-zinc-300">
-                    {storeLink}
+                <p className={`mt-2 text-[11px] ${slugAvailable === true ? "text-green-400" : slugAvailable === false ? "text-red-400" : "text-zinc-600"}`}>
+                  {slugMessage}
+                </p>
+
+                <div className="mt-3 rounded-2xl bg-black/35 p-4">
+                  <p className="text-[9px] font-black uppercase tracking-[0.14em] text-zinc-600">
+                    Link final
                   </p>
 
-                  <button onClick={copyLink} className="text-orange-400">
-                    <Copy size={16} />
-                  </button>
+                  <div className="mt-2 flex items-center gap-2">
+                    <p className="flex-1 break-all text-xs font-bold text-zinc-300">
+                      {storeLink}
+                    </p>
+
+                    <button onClick={copyLink} className="text-orange-400">
+                      <Copy size={16} />
+                    </button>
+                  </div>
                 </div>
+
+                {store.isPublished && cleanSlug && (
+                  <Link
+                    href={`/${cleanSlug}`}
+                    target="_blank"
+                    className="mt-3 flex items-center justify-center gap-2 rounded-2xl border border-green-400/25 bg-green-500/10 px-4 py-3 text-sm font-black text-green-300"
+                  >
+                    <ExternalLink size={16} />
+                    Abrir loja publicada
+                  </Link>
+                )}
               </div>
 
               <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-5 backdrop-blur-xl">
@@ -717,10 +967,20 @@ export default function MinhaLojaPage() {
               <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-5 backdrop-blur-xl">
                 <div className="mb-4 flex items-center gap-3">
                   <ShieldCheck size={21} className="text-green-400" />
-                  <div>
+                  <div className="flex-1">
                     <p className="font-black">Checklist da vitrine</p>
                     <p className="text-xs text-zinc-500">Pontos básicos antes de publicar.</p>
                   </div>
+                  <span className="text-lg font-black text-orange-400">
+                    {publishProgress}%
+                  </span>
+                </div>
+
+                <div className="mb-3 h-2 overflow-hidden rounded-full bg-white/10">
+                  <div
+                    className="h-full rounded-full bg-orange-500 transition-all duration-500"
+                    style={{ width: `${publishProgress}%` }}
+                  />
                 </div>
 
                 {[
@@ -739,112 +999,110 @@ export default function MinhaLojaPage() {
           </div>
         </div>
 
-        <aside className="hidden rounded-[30px] border border-white/10 bg-white/[0.04] p-4 backdrop-blur-xl lg:block">
-          <div className="mb-4 flex items-center justify-between">
+        <aside className="hidden self-start rounded-[30px] border border-white/10 bg-white/[0.04] p-4 backdrop-blur-xl lg:sticky lg:top-5 lg:block">
+          <div className="mb-4 flex items-center justify-between gap-3">
             <div>
-              <p className="text-lg font-black">Preview ao vivo</p>
-              <p className="text-xs text-zinc-500">Tudo muda enquanto você edita.</p>
+              <p className="text-lg font-black">Sua loja ao vivo</p>
+              <p className="text-xs text-zinc-500">
+                A mesma vitrine que seus clientes acessam.
+              </p>
             </div>
 
-            <Eye className="text-orange-400" size={20} />
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={refreshPreview}
+                disabled={!cleanSlug}
+                title="Atualizar preview"
+                className="flex h-10 w-10 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.04] text-zinc-300 transition hover:border-orange-400/30 hover:text-orange-400 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <RefreshCw
+                  size={17}
+                  className={previewLoading ? "animate-spin" : ""}
+                />
+              </button>
+
+              {cleanSlug && (
+                <Link
+                  href={`/${cleanSlug}`}
+                  target="_blank"
+                  title="Abrir loja em nova guia"
+                  className="flex h-10 w-10 items-center justify-center rounded-2xl border border-orange-400/25 bg-orange-500/10 text-orange-400 transition hover:bg-orange-500/20"
+                >
+                  <ExternalLink size={17} />
+                </Link>
+              )}
+            </div>
           </div>
 
-          <div className="mx-auto max-w-[300px] rounded-[38px] border border-white/15 bg-black p-3">
-            <div className="overflow-hidden rounded-[28px] border border-white/10 bg-[#080808]">
-              <div
-                className="relative overflow-hidden p-4"
-                style={{ backgroundColor: store.primaryColor }}
-              >
-                {store.bannerUrl && (
-                  <img
-                    src={store.bannerUrl}
-                    alt="Banner"
-                    className="absolute inset-0 h-full w-full object-cover opacity-40"
-                  />
-                )}
+          <div className="mb-3 flex items-center justify-between rounded-2xl border border-white/10 bg-black/30 px-3 py-2">
+            <div className="flex min-w-0 items-center gap-2">
+              <span
+                className={`h-2 w-2 shrink-0 rounded-full ${
+                  store.isPublished ? "bg-green-400" : "bg-yellow-400"
+                }`}
+              />
+              <p className="truncate text-[11px] font-bold text-zinc-400">
+                /{cleanSlug || "sua-loja"}
+              </p>
+            </div>
 
-                <div className="relative z-10">
-                  <div className="mb-4 flex items-center gap-3">
-                    <div className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-full border border-white/25 bg-black/35 text-2xl font-black">
-                      {isImageUrl(store.logo) ? (
-                        <img src={store.logo} alt="Logo" className="h-full w-full object-cover" />
-                      ) : (
-                        <span>{store.logo || "🍕"}</span>
-                      )}
-                    </div>
+            <span className="ml-2 shrink-0 text-[9px] font-black uppercase tracking-[0.12em] text-zinc-600">
+              {store.isPublished ? "Publicada" : "Preview"}
+            </span>
+          </div>
 
-                    <div>
-                      <h3 className="text-xl font-black leading-none">
-                        {store.name || "Nome da loja"}
-                      </h3>
-                      <p className="mt-1 text-[11px] text-orange-100">
-                        {store.isOpen ? "Aberto agora" : "Fechado agora"} • {store.averageTime || "30-40 min"}
+          <div className="relative mx-auto h-[690px] max-w-[318px] overflow-hidden rounded-[42px] border-[7px] border-[#171717] bg-black shadow-[0_30px_80px_rgba(0,0,0,0.55)]">
+            <div className="pointer-events-none absolute left-1/2 top-2 z-30 h-5 w-24 -translate-x-1/2 rounded-full bg-black" />
+
+            {!cleanSlug ? (
+              <div className="flex h-full flex-col items-center justify-center px-6 text-center">
+                <Globe size={34} className="text-orange-400" />
+                <p className="mt-4 text-sm font-black">
+                  Defina o endereço da sua loja
+                </p>
+                <p className="mt-2 text-xs leading-5 text-zinc-500">
+                  Assim que sua loja tiver um link, a vitrine real aparecerá aqui.
+                </p>
+              </div>
+            ) : (
+              <>
+                {previewLoading && (
+                  <div className="absolute inset-0 z-20 flex items-center justify-center bg-[#080808]">
+                    <div className="text-center">
+                      <Loader2
+                        size={28}
+                        className="mx-auto animate-spin text-orange-400"
+                      />
+                      <p className="mt-3 text-[11px] font-bold text-zinc-500">
+                        Carregando sua loja...
                       </p>
                     </div>
                   </div>
-
-                  <p className="line-clamp-2 text-xs text-orange-50">
-                    {store.description}
-                  </p>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-3 gap-2 p-3">
-                <Mini label="Entrega" value={`R$ ${store.deliveryFee || "0,00"}`} />
-                <Mini label="Tempo" value={store.averageTime || "30-40"} />
-                <Mini label="Mínimo" value={`R$ ${store.minOrder || "0,00"}`} />
-              </div>
-
-              <div className="px-3">
-                <div className="rounded-[24px] p-4" style={{ backgroundColor: store.primaryColor }}>
-                  <p className="mb-2 inline-flex rounded-full bg-black/25 px-3 py-1 text-[10px] font-black">
-                    🔥 {store.bannerSubtitle || "Promoção"}
-                  </p>
-
-                  <h4 className="text-2xl font-black leading-none">
-                    {store.bannerTitle || "Produto destaque"}
-                  </h4>
-
-                  <p className="mt-3 text-xl font-black text-yellow-200">
-                    R$ {store.bannerPrice || "0,00"}
-                  </p>
-
-                  <button className="mt-3 rounded-full bg-white px-4 py-2 text-xs font-black text-black">
-                    Pedir agora
-                  </button>
-                </div>
-              </div>
-
-              <div className="space-y-2 p-3">
-                {products.map((product) => (
-                  <div key={product.id} className="flex items-center gap-3 rounded-2xl bg-white/[0.05] p-3">
-                    <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-orange-500/10 text-xl">
-                      {product.emoji || "🍽️"}
-                    </div>
-
-                    <div className="flex-1">
-                      <p className="text-xs font-black">{product.name}</p>
-                      <p className="mt-1 text-xs font-black text-orange-400">
-                        {money(product.price)}
-                      </p>
-                    </div>
-                  </div>
-                ))}
-
-                {products.length === 0 && (
-                  <div className="rounded-2xl bg-white/[0.05] p-3 text-center">
-                    <p className="text-xs text-zinc-500">
-                      Cadastre produtos para aparecer aqui.
-                    </p>
-                  </div>
                 )}
-              </div>
 
-              <div className="p-3">
-                <button className="flex w-full items-center justify-center gap-2 rounded-2xl bg-orange-500 px-4 py-3 text-xs font-black">
-                  <MessageCircle size={15} />
-                  Finalizar pedido
-                </button>
+                <iframe
+                  key={previewVersion}
+                  src={previewUrl}
+                  title={`Preview da loja ${store.name || ""}`}
+                  onLoad={() => setPreviewLoading(false)}
+                  className="h-full w-full border-0 bg-[#080808]"
+                />
+              </>
+            )}
+          </div>
+
+          <div className="mt-4 rounded-2xl border border-orange-400/15 bg-orange-500/[0.07] p-3">
+            <div className="flex items-start gap-3">
+              <Eye className="mt-0.5 shrink-0 text-orange-400" size={17} />
+              <div>
+                <p className="text-xs font-black text-orange-200">
+                  Preview da loja real
+                </p>
+                <p className="mt-1 text-[10px] leading-4 text-zinc-500">
+                  O preview fica fixo e só atualiza quando você salva alterações
+                  ou toca no botão de atualizar. Produtos, categorias e fotos vêm da loja real.
+                </p>
               </div>
             </div>
           </div>
@@ -913,15 +1171,6 @@ function Textarea({
         onChange={(event) => onChange(event.target.value)}
         className="h-24 w-full resize-none rounded-2xl border border-white/10 bg-black/40 px-4 py-3 text-sm outline-none focus:border-orange-400/50"
       />
-    </div>
-  );
-}
-
-function Mini({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-2xl bg-white/[0.05] p-3">
-      <p className="text-[10px] text-zinc-500">{label}</p>
-      <p className="text-xs font-black">{value}</p>
     </div>
   );
 }

@@ -31,6 +31,10 @@ export default function CadastroPage() {
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
 
+  function normalizeStoreName(value: string) {
+    return value.trim().replace(/\s+/g, " ");
+  }
+
   function generateSlug(value: string) {
     return value
       .toLowerCase()
@@ -39,15 +43,130 @@ export default function CadastroPage() {
       .replace(/[^a-z0-9\s-]/g, "")
       .trim()
       .replace(/\s+/g, "-")
-      .replace(/-+/g, "-");
+      .replace(/-+/g, "-")
+      .replace(/^-|-$/g, "");
+  }
+
+  function getSlugCandidates(value: string) {
+    const hyphenatedSlug = generateSlug(value);
+    const compactSlug = hyphenatedSlug.replace(/-/g, "");
+
+    if (!compactSlug) {
+      return [];
+    }
+
+    const candidates = [
+      compactSlug,
+      ...(hyphenatedSlug !== compactSlug ? [hyphenatedSlug] : []),
+    ];
+
+    for (let index = 1; index <= 50; index += 1) {
+      candidates.push(`${compactSlug}${index}`);
+    }
+
+    return Array.from(new Set(candidates));
+  }
+
+  async function createStoreWithAvailableSlug({
+    ownerId,
+    name,
+    phone,
+  }: {
+    ownerId: string;
+    name: string;
+    phone: string;
+  }) {
+    const candidates = getSlugCandidates(name);
+
+    if (candidates.length === 0) {
+      throw new Error(
+        "Não conseguimos criar o endereço da sua loja. Confira o nome informado."
+      );
+    }
+
+    for (const slug of candidates) {
+      const { error } = await supabase.from("stores").insert({
+        owner_id: ownerId,
+        name,
+        slug,
+        whatsapp: phone,
+        description:
+          "Loja criada no Pedisk. Edite sua descrição no painel Minha Loja.",
+        is_open: true,
+        delivery_time: "30-40 min",
+        minimum_order: 20,
+        default_delivery_fee: 5,
+        rating: 4.9,
+      });
+
+      if (!error) {
+        return slug;
+      }
+
+      const duplicateSlug =
+        error.code === "23505" ||
+        error.message?.toLowerCase().includes("duplicate") ||
+        error.message?.toLowerCase().includes("unique");
+
+      if (!duplicateSlug) {
+        throw error;
+      }
+    }
+
+    const fallbackSlug = `${candidates[0]}${Date.now()
+      .toString()
+      .slice(-6)}`;
+
+    const { error: fallbackError } = await supabase.from("stores").insert({
+      owner_id: ownerId,
+      name,
+      slug: fallbackSlug,
+      whatsapp: phone,
+      description:
+        "Loja criada no Pedisk. Edite sua descrição no painel Minha Loja.",
+      is_open: true,
+      delivery_time: "30-40 min",
+      minimum_order: 20,
+      default_delivery_fee: 5,
+      rating: 4.9,
+    });
+
+    if (fallbackError) {
+      throw fallbackError;
+    }
+
+    return fallbackSlug;
   }
 
   async function handleCadastro(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setErrorMessage("");
 
-    if (!storeName || !ownerName || !whatsapp || !email || !password) {
+    const cleanStoreName = normalizeStoreName(storeName);
+    const cleanOwnerName = ownerName.trim();
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanWhatsapp = whatsapp.replace(/\D/g, "");
+
+    if (
+      !cleanStoreName ||
+      !cleanOwnerName ||
+      !cleanWhatsapp ||
+      !cleanEmail ||
+      !password
+    ) {
       setErrorMessage("Preencha todos os campos para criar sua loja.");
+      return;
+    }
+
+    if (cleanStoreName.length < 3) {
+      setErrorMessage("O nome da loja precisa ter pelo menos 3 caracteres.");
+      return;
+    }
+
+    if (cleanWhatsapp.length < 10 || cleanWhatsapp.length > 13) {
+      setErrorMessage(
+        "Digite um WhatsApp válido com DDD. Exemplo: 21999999999."
+      );
       return;
     }
 
@@ -61,13 +180,13 @@ export default function CadastroPage() {
     try {
       const { data: authData, error: authError } =
         await supabase.auth.signUp({
-          email,
+          email: cleanEmail,
           password,
           options: {
             data: {
-              name: ownerName,
-              store_name: storeName,
-              whatsapp,
+              name: cleanOwnerName,
+              store_name: cleanStoreName,
+              whatsapp: cleanWhatsapp,
             },
           },
         });
@@ -84,40 +203,42 @@ export default function CadastroPage() {
 
       const { error: profileError } = await supabase.from("profiles").insert({
         id: user.id,
-        name: ownerName,
-        email,
+        name: cleanOwnerName,
+        email: cleanEmail,
       });
 
-      if (profileError) {
+      if (profileError && profileError.code !== "23505") {
         throw profileError;
       }
 
-      const baseSlug = generateSlug(storeName);
-      const finalSlug = `${baseSlug}-${Math.floor(1000 + Math.random() * 9000)}`;
-
-      const { error: storeError } = await supabase.from("stores").insert({
-        owner_id: user.id,
-        name: storeName,
-        slug: finalSlug,
-        whatsapp,
-        description:
-          "Loja criada no Pedisk. Edite sua descrição no painel Minha Loja.",
-        is_open: true,
-        delivery_time: "30-40 min",
-        minimum_order: 20,
-        default_delivery_fee: 5,
-        rating: 4.9,
+      await createStoreWithAvailableSlug({
+        ownerId: user.id,
+        name: cleanStoreName,
+        phone: cleanWhatsapp,
       });
 
-      if (storeError) {
-        throw storeError;
-      }
-
       router.push("/painel/minha-loja");
+      router.refresh();
     } catch (error: any) {
-      setErrorMessage(
-        error?.message || "Erro ao criar sua loja. Tente novamente."
-      );
+      const message = String(error?.message || "").toLowerCase();
+
+      if (
+        message.includes("user already registered") ||
+        message.includes("already been registered") ||
+        message.includes("already registered")
+      ) {
+        setErrorMessage(
+          "Este e-mail já possui uma conta. Entre com sua senha ou use outro e-mail."
+        );
+      } else if (message.includes("stores_slug_format")) {
+        setErrorMessage(
+          "O endereço da loja não pôde ser criado. Confirme se a atualização do banco foi executada."
+        );
+      } else {
+        setErrorMessage(
+          error?.message || "Erro ao criar sua loja. Tente novamente."
+        );
+      }
     } finally {
       setLoading(false);
     }

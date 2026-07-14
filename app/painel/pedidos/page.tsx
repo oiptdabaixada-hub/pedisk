@@ -156,20 +156,66 @@ export default function PainelPedidosPage() {
   >("connecting");
 
   const audioContextRef = useRef<AudioContext | null>(null);
+  const orderAlarmIntervalRef = useRef<number | null>(null);
+  const whatsappWindowRef = useRef<Window | null>(null);
   const initialLoadFinishedRef = useRef(false);
 
+  // Mantém apenas um canal Realtime ativo por vez.
+  const realtimeChannelRef = useRef<ReturnType<
+    typeof supabase.channel
+  > | null>(null);
+
+  // Evita atualizações de estado depois que a página for desmontada.
+  const mountedRef = useRef(true);
+
+  // Mantém o valor mais recente do som dentro do callback do Realtime.
+  const soundEnabledRef = useRef(false);
+
   useEffect(() => {
-    initializePanel();
+    mountedRef.current = true;
 
     const savedSound = localStorage.getItem("pedisk-order-sound");
-    setSoundEnabled(savedSound === "true");
+    const savedSoundEnabled = savedSound === "true";
+
+    setSoundEnabled(savedSoundEnabled);
+    soundEnabledRef.current = savedSoundEnabled;
+
+    initializePanel();
 
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
+
+    return () => {
+      mountedRef.current = false;
+      window.clearInterval(timer);
+
+      if (orderAlarmIntervalRef.current !== null) {
+        window.clearInterval(orderAlarmIntervalRef.current);
+        orderAlarmIntervalRef.current = null;
+      }
+
+      // Esse cleanup é o ponto principal da correção:
+      // ao sair ou recarregar a página, o canal antigo é removido.
+      const currentChannel = realtimeChannelRef.current;
+
+      if (currentChannel) {
+        supabase.removeChannel(currentChannel);
+        realtimeChannelRef.current = null;
+      }
+    };
   }, []);
 
+  useEffect(() => {
+    const hasNewOrders = orders.some((order) => order.status === "novo");
+
+    if (soundEnabled && hasNewOrders) {
+      startNewOrderAlarm();
+    } else {
+      stopNewOrderAlarm();
+    }
+  }, [orders, soundEnabled]);
+
   async function initializePanel() {
-    setLoading(true);
+    if (mountedRef.current) setLoading(true);
 
     try {
       const { data: sessionData } = await supabase.auth.getSession();
@@ -200,7 +246,10 @@ export default function PainelPedidosPage() {
       setConnectionStatus("offline");
     } finally {
       initialLoadFinishedRef.current = true;
-      setLoading(false);
+
+      if (mountedRef.current) {
+        setLoading(false);
+      }
     }
   }
 
@@ -249,7 +298,18 @@ export default function PainelPedidosPage() {
   }
 
   function subscribeToOrders(currentStoreId: string) {
+    if (!currentStoreId) return;
+
     setConnectionStatus("connecting");
+
+    // Antes de criar uma nova inscrição, remove qualquer canal antigo.
+    // Isso evita o conflito de SUBSCRIBE visto no console.
+    const previousChannel = realtimeChannelRef.current;
+
+    if (previousChannel) {
+      supabase.removeChannel(previousChannel);
+      realtimeChannelRef.current = null;
+    }
 
     const channel = supabase
       .channel(`pedisk-orders-${currentStoreId}`)
@@ -262,6 +322,8 @@ export default function PainelPedidosPage() {
           filter: `store_id=eq.${currentStoreId}`,
         },
         (payload) => {
+          if (!mountedRef.current) return;
+
           const newOrder = mapOrder(payload.new as OrderRow);
 
           setOrders((current) => {
@@ -281,8 +343,8 @@ export default function PainelPedidosPage() {
               `Novo pedido ${newOrder.id} — ${newOrder.customer.name}`
             );
 
-            if (soundEnabled) {
-              playNewOrderSound();
+            if (soundEnabledRef.current) {
+              startNewOrderAlarm();
             }
           }
         }
@@ -296,6 +358,8 @@ export default function PainelPedidosPage() {
           filter: `store_id=eq.${currentStoreId}`,
         },
         (payload) => {
+          if (!mountedRef.current) return;
+
           const updatedOrder = mapOrder(payload.new as OrderRow);
 
           setOrders((current) =>
@@ -316,6 +380,8 @@ export default function PainelPedidosPage() {
           filter: `store_id=eq.${currentStoreId}`,
         },
         (payload) => {
+          if (!mountedRef.current) return;
+
           const deletedId = String(payload.old.id || "");
 
           setOrders((current) =>
@@ -326,6 +392,8 @@ export default function PainelPedidosPage() {
         }
       )
       .subscribe((status) => {
+        if (!mountedRef.current) return;
+
         if (status === "SUBSCRIBED") {
           setConnectionStatus("online");
         } else if (
@@ -337,9 +405,7 @@ export default function PainelPedidosPage() {
         }
       });
 
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    realtimeChannelRef.current = channel;
   }
 
   function showToast(text: string) {
@@ -375,18 +441,47 @@ export default function PainelPedidosPage() {
       return;
     }
 
-    const encodedMessage = message
-      ? `?text=${encodeURIComponent(message)}`
-      : "";
-    const url = `https://wa.me/${normalizedPhone}${encodedMessage}`;
+    const params = new URLSearchParams({
+      phone: normalizedPhone,
+    });
+
+    if (message) {
+      params.set("text", message);
+    }
+
+    const url = `https://web.whatsapp.com/send?${params.toString()}`;
 
     if (isMobileDevice()) {
-      window.location.href = url;
+      const mobileParams = new URLSearchParams({
+        phone: normalizedPhone,
+      });
+
+      if (message) {
+        mobileParams.set("text", message);
+      }
+
+      window.location.href = `https://api.whatsapp.com/send?${mobileParams.toString()}`;
       return;
     }
 
-    const whatsappWindow = window.open(url, "pedisk-whatsapp");
-    whatsappWindow?.focus();
+    // Reutiliza SEMPRE a mesma aba/janela do WhatsApp.
+    // Na primeira vez abre uma aba; nas próximas, navega a mesma aba
+    // direto para a conversa do cliente e traz ela para frente.
+    if (
+      whatsappWindowRef.current &&
+      !whatsappWindowRef.current.closed
+    ) {
+      whatsappWindowRef.current.location.href = url;
+      whatsappWindowRef.current.focus();
+      return;
+    }
+
+    whatsappWindowRef.current = window.open(
+      url,
+      "pedisk-whatsapp"
+    );
+
+    whatsappWindowRef.current?.focus();
   }
 
   function itemsSummary(order: Order) {
@@ -620,14 +715,64 @@ Entre em contato com a loja para mais informações.`;
 
   function toggleSound() {
     const next = !soundEnabled;
+
     setSoundEnabled(next);
+    soundEnabledRef.current = next;
     localStorage.setItem("pedisk-order-sound", String(next));
 
     if (next) {
+      // O clique do usuário libera o AudioContext nos navegadores.
+      unlockAudio();
       playNewOrderSound();
+
+      if (orders.some((order) => order.status === "novo")) {
+        startNewOrderAlarm();
+      }
+
       showToast("Som de novos pedidos ativado.");
     } else {
+      stopNewOrderAlarm();
       showToast("Som desativado.");
+    }
+  }
+
+  function unlockAudio() {
+    try {
+      const AudioContextClass =
+        window.AudioContext ||
+        (window as typeof window & {
+          webkitAudioContext: typeof AudioContext;
+        }).webkitAudioContext;
+
+      const context =
+        audioContextRef.current || new AudioContextClass();
+
+      audioContextRef.current = context;
+
+      if (context.state === "suspended") {
+        context.resume();
+      }
+    } catch (error) {
+      console.error("Erro ao liberar áudio:", error);
+    }
+  }
+
+  function startNewOrderAlarm() {
+    if (!soundEnabledRef.current) return;
+    if (orderAlarmIntervalRef.current !== null) return;
+
+    playNewOrderSound();
+
+    // Repete até não existir mais nenhum pedido com status "novo".
+    orderAlarmIntervalRef.current = window.setInterval(() => {
+      playNewOrderSound();
+    }, 1800);
+  }
+
+  function stopNewOrderAlarm() {
+    if (orderAlarmIntervalRef.current !== null) {
+      window.clearInterval(orderAlarmIntervalRef.current);
+      orderAlarmIntervalRef.current = null;
     }
   }
 
@@ -641,25 +786,42 @@ Entre em contato com a loja para mais informações.`;
 
       const context =
         audioContextRef.current || new AudioContextClass();
+
       audioContextRef.current = context;
 
-      [880, 1046, 1318].forEach((frequency, index) => {
+      if (context.state === "suspended") {
+        context.resume();
+      }
+
+      // Alerta curto em duas sequências, estilo central de delivery.
+      const notes = [
+        { frequency: 784, at: 0.0, duration: 0.13 },
+        { frequency: 988, at: 0.16, duration: 0.13 },
+        { frequency: 1175, at: 0.32, duration: 0.18 },
+        { frequency: 988, at: 0.62, duration: 0.13 },
+        { frequency: 1175, at: 0.78, duration: 0.13 },
+        { frequency: 1568, at: 0.94, duration: 0.22 },
+      ];
+
+      notes.forEach(({ frequency, at, duration }) => {
         const oscillator = context.createOscillator();
         const gain = context.createGain();
-        const start = context.currentTime + index * 0.16;
+        const start = context.currentTime + at;
 
+        oscillator.type = "sine";
         oscillator.frequency.value = frequency;
-        gain.gain.setValueAtTime(0, start);
-        gain.gain.linearRampToValueAtTime(0.09, start + 0.01);
+
+        gain.gain.setValueAtTime(0.0001, start);
+        gain.gain.exponentialRampToValueAtTime(0.12, start + 0.015);
         gain.gain.exponentialRampToValueAtTime(
-          0.001,
-          start + 0.13
+          0.0001,
+          start + duration
         );
 
         oscillator.connect(gain);
         gain.connect(context.destination);
         oscillator.start(start);
-        oscillator.stop(start + 0.14);
+        oscillator.stop(start + duration + 0.02);
       });
     } catch (error) {
       console.error("Erro ao tocar som:", error);

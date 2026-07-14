@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import {
   AlertTriangle,
@@ -94,6 +94,7 @@ type OrderPayload = {
 
 export default function CheckoutPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
 
   const [cart, setCart] = useState<CartItem[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -111,6 +112,13 @@ export default function CheckoutPage() {
   const [paymentMethod, setPaymentMethod] = useState("PIX");
   const [generalObservation, setGeneralObservation] = useState("");
   const [formError, setFormError] = useState("");
+
+  const urlStoreSlug = (searchParams.get("loja") || "")
+    .trim()
+    .toLowerCase();
+
+  const activeStoreSlug = store?.slug || urlStoreSlug;
+  const storeHref = activeStoreSlug ? `/${activeStoreSlug}` : "/loja";
 
   useEffect(() => {
     loadCart();
@@ -461,6 +469,8 @@ export default function CheckoutPage() {
         status: data.status,
         storeId: data.store_id,
         storeName: store?.name || "Loja",
+        storeSlug: store?.slug || urlStoreSlug,
+        storeWhatsapp: store?.whatsapp || "",
         customer: data.customer,
         address: data.address,
         delivery: data.delivery,
@@ -479,7 +489,17 @@ export default function CheckoutPage() {
       localStorage.removeItem("pedisk-cart");
       setCart([]);
 
-      router.push("/pedido-concluido");
+      const concludedParams = new URLSearchParams();
+
+      if (store?.slug || urlStoreSlug) {
+        concludedParams.set("loja", store?.slug || urlStoreSlug);
+      }
+
+      concludedParams.set("pedido", data.order_code);
+
+      router.push(
+        `/pedido-concluido?${concludedParams.toString()}`
+      );
     } catch (error) {
       console.error("Erro ao criar pedido:", error);
       setFormError(
@@ -601,7 +621,7 @@ ${generalObservation || "Sem observação"}`;
             Escolha seus produtos e volte para finalizar.
           </p>
           <Link
-            href="/loja"
+            href={storeHref}
             className="mt-7 flex w-full items-center justify-center gap-2 rounded-2xl bg-orange-500 px-5 py-4 font-black"
           >
             Voltar para loja
@@ -635,7 +655,7 @@ ${generalObservation || "Sem observação"}`;
               </p>
             </div>
             <Link
-              href="/loja"
+              href={storeHref}
               className="flex h-10 w-10 items-center justify-center rounded-xl bg-orange-500"
             >
               <ShoppingBag size={18} />
