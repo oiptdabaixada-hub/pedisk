@@ -266,9 +266,9 @@ export default function PublicStorePage() {
           className="overflow-hidden rounded-[28px] border border-white/10 backdrop-blur-xl" style={{ backgroundColor: cardColor }}
         >
           <div className="relative h-[185px] overflow-hidden md:h-[250px]">
-            {store.banner_url ? (
+            {store?.banner_url ? (
               <img
-                src={store.banner_url}
+                src={store.banner_url!}
                 alt="Banner da loja"
                 className="absolute inset-0 h-full w-full object-cover"
               />
