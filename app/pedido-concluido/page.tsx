@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   CheckCircle2,
@@ -70,7 +70,7 @@ type Order = {
   total: number;
 };
 
-export default function PedidoConcluidoPage() {
+function PedidoConcluidoPageContent() {
   const searchParams = useSearchParams();
 
   const [order, setOrder] = useState<Order | null>(null);
@@ -345,6 +345,22 @@ export default function PedidoConcluidoPage() {
         </div>
       </section>
     </main>
+  );
+}
+
+export default function PedidoConcluidoPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="min-h-screen bg-[#050505] text-white">
+          <div className="flex min-h-screen items-center justify-center">
+            <div className="h-12 w-12 animate-spin rounded-full border-4 border-white/10 border-t-orange-500" />
+          </div>
+        </main>
+      }
+    >
+      <PedidoConcluidoPageContent />
+    </Suspense>
   );
 }
 
