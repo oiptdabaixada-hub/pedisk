@@ -258,6 +258,9 @@ export default function PublicStorePage() {
     );
   }
 
+  // Referência estável e não nula para uso dentro das funções internas.
+  const currentStore = store;
+
   function renderBlock(key: BlockKey) {
     if (key === "banner") {
       return (
@@ -266,9 +269,9 @@ export default function PublicStorePage() {
           className="overflow-hidden rounded-[28px] border border-white/10 backdrop-blur-xl" style={{ backgroundColor: cardColor }}
         >
           <div className="relative h-[185px] overflow-hidden md:h-[250px]">
-            {store?.banner_url ? (
+            {currentStore.banner_url ? (
               <img
-                src={store.banner_url!}
+                src={currentStore.banner_url}
                 alt="Banner da loja"
                 className="absolute inset-0 h-full w-full object-cover"
               />
@@ -288,34 +291,34 @@ export default function PublicStorePage() {
                   className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-2xl border-2 border-white text-4xl shadow-[0_0_35px_rgba(249,115,22,0.35)] md:h-20 md:w-20"
                   style={{ backgroundColor: primaryColor }}
                 >
-                  {store.logo_url?.startsWith("http") ? (
+                  {currentStore.logo_url?.startsWith("http") ? (
                     <img
-                      src={store.logo_url}
-                      alt={store.name}
+                      src={currentStore.logo_url}
+                      alt={currentStore.name}
                       className="h-full w-full object-cover"
                     />
                   ) : (
-                    store.logo_url || "p"
+                    currentStore.logo_url || "p"
                   )}
                 </div>
 
                 <div>
                   <div
                     className={`mb-1 inline-flex rounded-full px-3 py-1 text-[11px] font-black ${
-                      store.is_open
+                      currentStore.is_open
                         ? "bg-green-500/15 text-green-400"
                         : "bg-red-500/15 text-red-300"
                     }`}
                   >
-                    ● {store.is_open ? "Aberto agora" : "Fechado agora"}
+                    ● {currentStore.is_open ? "Aberto agora" : "Fechado agora"}
                   </div>
 
                   <h1 className="text-3xl font-black tracking-[-0.05em] md:text-5xl" style={{ color: textColor }}>
-                    {store.name}
+                    {currentStore.name}
                   </h1>
 
                   <p className="mt-1 line-clamp-2 max-w-xl text-xs text-zinc-300 md:text-sm">
-                    {store.description}
+                    {currentStore.description}
                   </p>
                 </div>
               </div>
@@ -555,14 +558,14 @@ export default function PublicStorePage() {
 
               <div>
                 <p className="text-base font-black leading-tight">
-                  {store.name}
+                  {currentStore.name}
                 </p>
                 <p
                   className={`text-xs font-semibold ${
-                    store.is_open ? "text-green-400" : "text-red-300"
+                    currentStore.is_open ? "text-green-400" : "text-red-300"
                   }`}
                 >
-                  {store.is_open ? "Aberto agora" : "Fechado agora"} •{" "}
+                  {currentStore.is_open ? "Aberto agora" : "Fechado agora"} •{" "}
                   {deliveryTime}
                 </p>
               </div>
