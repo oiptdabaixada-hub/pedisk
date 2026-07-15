@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import {
@@ -92,7 +92,7 @@ type OrderPayload = {
   total: number;
 };
 
-export default function CheckoutPage() {
+function CheckoutPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -935,6 +935,26 @@ ${generalObservation || "Sem observação"}`;
         </div>
       </section>
     </main>
+  );
+}
+
+
+export default function CheckoutPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="flex min-h-screen items-center justify-center bg-[#050505] text-white">
+          <div className="flex flex-col items-center gap-4">
+            <Loader2 className="animate-spin text-orange-400" size={42} />
+            <p className="text-sm font-bold text-zinc-500">
+              Preparando checkout...
+            </p>
+          </div>
+        </main>
+      }
+    >
+      <CheckoutPageContent />
+    </Suspense>
   );
 }
 
