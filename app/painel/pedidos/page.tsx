@@ -214,6 +214,23 @@ export default function PainelPedidosPage() {
     }
   }, [orders, soundEnabled]);
 
+  useEffect(() => {
+    const newOrdersCount = orders.filter(
+      (order) => order.status === "novo"
+    ).length;
+
+    const badgeNavigator = navigator as Navigator & {
+      setAppBadge?: (contents?: number) => Promise<void>;
+      clearAppBadge?: () => Promise<void>;
+    };
+
+    if (newOrdersCount > 0) {
+      badgeNavigator.setAppBadge?.(newOrdersCount).catch(() => {});
+    } else {
+      badgeNavigator.clearAppBadge?.().catch(() => {});
+    }
+  }, [orders]);
+
   async function initializePanel() {
     if (mountedRef.current) setLoading(true);
 
@@ -345,6 +362,31 @@ export default function PainelPedidosPage() {
 
             if (soundEnabledRef.current) {
               startNewOrderAlarm();
+            }
+
+            if (
+              document.hidden &&
+              "Notification" in window &&
+              Notification.permission === "granted" &&
+              "serviceWorker" in navigator
+            ) {
+              navigator.serviceWorker.ready
+                .then((registration) =>
+                  registration.showNotification(
+                    "Novo pedido na Pedisk 🔔",
+                    {
+                      body: `${newOrder.id} • ${
+                        newOrder.customer.name
+                      } • ${money(newOrder.total)}`,
+                      icon: "/pedisk-icon.png",
+                      badge: "/pedisk-icon.png",
+                      tag: `pedisk-order-${newOrder.databaseId}`,
+                      requireInteraction: true,
+                      data: { url: "/painel/pedidos" },
+                    }
+                  )
+                )
+                .catch(() => {});
             }
           }
         }
@@ -764,9 +806,10 @@ Entre em contato com a loja para mais informações.`;
     playNewOrderSound();
 
     // Repete até não existir mais nenhum pedido com status "novo".
+    // Intervalo curto para funcionar como campainha insistente de delivery.
     orderAlarmIntervalRef.current = window.setInterval(() => {
       playNewOrderSound();
-    }, 1800);
+    }, 2400);
   }
 
   function stopNewOrderAlarm() {
@@ -793,36 +836,79 @@ Entre em contato com a loja para mais informações.`;
         context.resume();
       }
 
-      // Alerta curto em duas sequências, estilo central de delivery.
-      const notes = [
-        { frequency: 784, at: 0.0, duration: 0.13 },
-        { frequency: 988, at: 0.16, duration: 0.13 },
-        { frequency: 1175, at: 0.32, duration: 0.18 },
-        { frequency: 988, at: 0.62, duration: 0.13 },
-        { frequency: 1175, at: 0.78, duration: 0.13 },
-        { frequency: 1568, at: 0.94, duration: 0.22 },
-      ];
+      const now = context.currentTime;
 
-      notes.forEach(({ frequency, at, duration }) => {
+      const compressor = context.createDynamicsCompressor();
+      compressor.threshold.setValueAtTime(-18, now);
+      compressor.knee.setValueAtTime(12, now);
+      compressor.ratio.setValueAtTime(8, now);
+      compressor.attack.setValueAtTime(0.003, now);
+      compressor.release.setValueAtTime(0.18, now);
+      compressor.connect(context.destination);
+
+      const master = context.createGain();
+      master.gain.setValueAtTime(0.82, now);
+      master.connect(compressor);
+
+      function ringBell(
+        startOffset: number,
+        baseFrequency: number,
+        duration: number
+      ) {
+        const start = now + startOffset;
+
         const oscillator = context.createOscillator();
         const gain = context.createGain();
-        const start = context.currentTime + at;
 
-        oscillator.type = "sine";
-        oscillator.frequency.value = frequency;
+        oscillator.type = "square";
+        oscillator.frequency.setValueAtTime(baseFrequency, start);
+        oscillator.frequency.exponentialRampToValueAtTime(
+          baseFrequency * 0.92,
+          start + duration
+        );
 
         gain.gain.setValueAtTime(0.0001, start);
-        gain.gain.exponentialRampToValueAtTime(0.12, start + 0.015);
+        gain.gain.exponentialRampToValueAtTime(0.42, start + 0.008);
         gain.gain.exponentialRampToValueAtTime(
           0.0001,
           start + duration
         );
 
         oscillator.connect(gain);
-        gain.connect(context.destination);
+        gain.connect(master);
         oscillator.start(start);
-        oscillator.stop(start + duration + 0.02);
-      });
+        oscillator.stop(start + duration + 0.03);
+
+        const harmonic = context.createOscillator();
+        const harmonicGain = context.createGain();
+
+        harmonic.type = "sine";
+        harmonic.frequency.setValueAtTime(baseFrequency * 2.02, start);
+
+        harmonicGain.gain.setValueAtTime(0.0001, start);
+        harmonicGain.gain.exponentialRampToValueAtTime(
+          0.23,
+          start + 0.006
+        );
+        harmonicGain.gain.exponentialRampToValueAtTime(
+          0.0001,
+          start + duration * 0.72
+        );
+
+        harmonic.connect(harmonicGain);
+        harmonicGain.connect(master);
+        harmonic.start(start);
+        harmonic.stop(start + duration + 0.03);
+      }
+
+      ringBell(0.0, 880, 0.34);
+      ringBell(0.38, 1175, 0.38);
+      ringBell(0.82, 880, 0.34);
+      ringBell(1.2, 1480, 0.46);
+
+      if ("vibrate" in navigator) {
+        navigator.vibrate([260, 90, 260, 90, 420]);
+      }
     } catch (error) {
       console.error("Erro ao tocar som:", error);
     }

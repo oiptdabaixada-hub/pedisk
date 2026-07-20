@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import PediskAppManager from "@/components/PediskAppManager";
 import {
   Boxes,
   ChevronRight,
@@ -530,6 +531,8 @@ export default function PainelLayout({
       <div className="relative z-10 min-h-screen lg:pl-[78px]">
         <div className="min-h-screen pb-24 lg:pb-0">{children}</div>
       </div>
+
+      <PediskAppManager />
 
       {/* BARRA INFERIOR MOBILE */}
       <nav className="fixed bottom-0 left-0 right-0 z-50 grid grid-cols-5 border-t border-white/10 bg-[#080808]/95 px-2 pb-[max(8px,env(safe-area-inset-bottom))] pt-2 backdrop-blur-2xl lg:hidden">

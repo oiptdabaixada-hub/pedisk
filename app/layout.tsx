@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
@@ -12,19 +12,29 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+export const viewport: Viewport = {
+  themeColor: "#050505",
+  colorScheme: "dark",
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+};
+
 export const metadata: Metadata = {
   metadataBase: new URL("https://pedisk.com.br"),
-
   title: {
     default: "Pedisk — Seu delivery. Sua marca. Seus clientes.",
     template: "%s | Pedisk",
   },
-
   description:
     "Crie sua loja online, receba pedidos e gerencie seu delivery em um só lugar. Simples, profissional e feito para o seu negócio.",
-
   applicationName: "Pedisk",
-
+  manifest: "/manifest.webmanifest",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "Pedisk",
+  },
   keywords: [
     "Pedisk",
     "delivery",
@@ -38,28 +48,19 @@ export const metadata: Metadata = {
     "sistema para hamburgueria",
     "sistema para pizzaria",
   ],
-
   authors: [{ name: "Pedisk" }],
   creator: "Pedisk",
   publisher: "Pedisk",
-
   formatDetection: {
     email: false,
     address: false,
     telephone: false,
   },
-
   icons: {
-    icon: [
-      {
-        url: "/pedisk-icon.png",
-        type: "image/png",
-      },
-    ],
+    icon: [{ url: "/pedisk-icon.png", type: "image/png" }],
     shortcut: "/pedisk-icon.png",
     apple: "/apple-touch-icon.png",
   },
-
   openGraph: {
     type: "website",
     locale: "pt_BR",
@@ -77,7 +78,6 @@ export const metadata: Metadata = {
       },
     ],
   },
-
   twitter: {
     card: "summary_large_image",
     title: "Pedisk — Seu delivery. Sua marca. Seus clientes.",
@@ -85,7 +85,6 @@ export const metadata: Metadata = {
       "Crie sua loja online, receba pedidos e gerencie seu delivery em um só lugar.",
     images: ["/pedisk-og.png"],
   },
-
   robots: {
     index: true,
     follow: true,
